@@ -17,7 +17,8 @@ import os
 
 
 # Define the directory containing the Blender RIG files
-base_dir  = r"C:\git\ModelMotionizer\static\blender\rigs"
+# TODO: probably better way to do this that isn't Windows specific
+base_dir  = r"C:\git\mesh2motion-assets\rigs"
 
 # Define the rig type/folder
 rig_type = "fox"
