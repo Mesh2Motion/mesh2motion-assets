@@ -1,7 +1,16 @@
 # Mesh2Motion Source Art Assets
 
+<table>
+  <tr>
+    <td><h4>Discord<h4></td>
+    <td><a href="https://discord.com/channels/1408921718231273613/1452129660791165001">Join the Discord channel</a></td>
+    <td>
+      <img src="https://img.shields.io/discord/1408921718231273613?label=People&color=purple" alt="Discord">
+    </td>
+  </tr>
+</table>
 
-<iframe src="https://discord.com/widget?id=1408921718231273613&theme=dark" width="350" height="500" allowtransparency="true" frameborder="0" sandbox="allow-popups allow-popups-to-escape-sandbox allow-same-origin allow-scripts"></iframe>
+
 
 
 This contains all the source files for art assets. This includes the following
