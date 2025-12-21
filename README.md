@@ -1,11 +1,7 @@
 # Mesh2Motion Source Art Assets
 
 
-
-\[discord-badge-img]: https://img.shields.io/badge/discord-7289da?style=for-the-badge
-
-\[discord-badge]: https://discord.gg/G8k9cqtw
-
+![Discord](https://img.shields.io/discord/1408921718231273613)
 
 
 This contains all the source files for art assets. This includes the following
