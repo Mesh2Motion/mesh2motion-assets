@@ -6,7 +6,7 @@ Contains random Python scripts to help me manage the files and animations
 
 
 
-\## Library Override 
+\## Library Override
 
 This happened when I wanted to re-arrange the rig and animation files. Moving the rig to a different location broken all the referenced library override files. I needed a way to go into every animation file quickly and update the references.
 
@@ -20,5 +20,29 @@ Navigate to the location.
 
 
 
-&nbsp;   blender -b --python library-override-fix.py
+    blender -b --python library-override-fix.py
+
+
+
+
+
+
+
+\## Combine animations
+
+
+
+&nbsp;   blender -b "C:\\git\\mesh2motion-assets\\rigs\\rig-kaiju.blend" --python "C:\\git\\mesh2motion-assets\\python-scripts\\combine-and-export.py"
+
+
+
+
+
+\## Testing animations
+
+
+
+Good website where you can test out bones to make sure only DEF bones are getting exported as well as action names.
+
+https://sandbox.babylonjs.com/
 

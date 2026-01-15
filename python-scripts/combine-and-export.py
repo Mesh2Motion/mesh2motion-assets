@@ -1,5 +1,6 @@
 import bpy
 import os
+import sys
 
 ## WHAT IS THIS SCRIPT FOR?
 # Each BLEND file only has one animation action. This script consolidates all these actions and
@@ -15,13 +16,11 @@ import os
 # 5. Click the "Run Script" (play) button
 # 6. You can put the GLB file in the static > animations folder overwriting the old rig one
 
+current_file_path = bpy.data.filepath  # e.g., "C:\git\mesh2motion-assets\rigs\rig-kaiju.blend"
+base_dir = os.path.dirname(current_file_path)  # e.g., "C:\git\mesh2motion-assets\rigs"
+blend_filename = os.path.basename(current_file_path)  # e.g., "rig-kaiju.blend"
+rig_type = blend_filename.replace("rig-", "").replace(".blend", "")  # e.g., "kaiju"
 
-# Define the directory containing the Blender RIG files
-# TODO: probably better way to do this that isn't Windows specific
-base_dir  = r"C:\git\mesh2motion-assets\rigs"
-
-# Define the rig type/folder
-rig_type = "fox"
 
 
 # DO NOT NEED TO CHANGE BELOW THIS LINE
