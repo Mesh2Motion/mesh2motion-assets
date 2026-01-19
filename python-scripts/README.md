@@ -30,9 +30,11 @@ Navigate to the location.
 
 \## Combine animations
 
+Go into this folder and run this command. 
 
 
-&nbsp;   blender -b "C:\\git\\mesh2motion-assets\\rigs\\rig-kaiju.blend" --python "C:\\git\\mesh2motion-assets\\python-scripts\\combine-and-export.py"
+
+    blender -b "C:\\git\\mesh2motion-assets\\rigs\\rig-kaiju.blend" --python "C:\\git\\mesh2motion-assets\\python-scripts\\combine-and-export.py"
 
 
 
