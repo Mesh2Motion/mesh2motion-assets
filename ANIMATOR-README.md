@@ -4,7 +4,7 @@ This is a general guide for working with Blender and how this web application ex
 
 ## Blender Source files
 
-I am using Blender 4.5. All the source files are in the "blender" folder at the location of this readme. There are two variations of the blender files for each rig
+I am using Blender 5.0. All the source files are in the "blender" folder at the location of this readme. There are two variations of the blender files for each rig
  - **RIG**-model.blend - Contains no animations. This has things like mirror modifiers applied to help with modeling
  - **RIG**.blend - Has the skeleton + model + animations.
 
