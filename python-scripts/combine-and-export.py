@@ -16,10 +16,19 @@ import sys
 # 5. Click the "Run Script" (play) button
 # 6. You can put the GLB file in the static > animations folder overwriting the old rig one
 
-current_file_path = bpy.data.filepath  # e.g., "C:\git\mesh2motion-assets\rigs\rig-kaiju.blend"
-base_dir = os.path.dirname(current_file_path)  # e.g., "C:\git\mesh2motion-assets\rigs"
-blend_filename = os.path.basename(current_file_path)  # e.g., "rig-kaiju.blend"
-rig_type = blend_filename.replace("rig-", "").replace(".blend", "")  # e.g., "kaiju"
+
+HARD_CODED = False
+
+if HARD_CODED:
+    rig_type = "spider"
+    base_dir = r"C:\git\mesh2motion-assets\rigs\\"
+    blend_dir = base_dir + rig_type + "\\"
+    output_file = blend_dir + r"spider-animations.glb"
+else: 
+    current_file_path = bpy.data.filepath  # e.g., "C:\git\mesh2motion-assets\rigs\rig-kaiju.blend"
+    base_dir = os.path.dirname(current_file_path)  # e.g., "C:\git\mesh2motion-assets\rigs"
+    blend_filename = os.path.basename(current_file_path)  # e.g., "rig-kaiju.blend"
+    rig_type = blend_filename.replace("rig-", "").replace(".blend", "")  # e.g., "kaiju"
 
 
 
@@ -39,6 +48,25 @@ for file in os.listdir(blend_dir):
         with bpy.data.libraries.load(filepath) as (data_from, data_to):
             data_to.actions = data_from.actions
 
+
+# assign all actions to the armature so they get exported. This is newer in Blender 5.0
+# and is kind of hacky the way you have to combine the actions. When you import the 
+# action data, they are not assigned to any object and Blender won't export them. 
+# So we have to assign them to the armature object and then they will show up in the GLB export.
+armature = next((obj for obj in bpy.data.objects if obj.type == 'ARMATURE'), None)
+if armature:
+    # Ensure animation_data exists on the armature object
+    anim_data = armature.animation_data_create()
+
+    for action in bpy.data.actions:
+        track = anim_data.nla_tracks.new()
+        track.name = action.name
+
+        start_frame = int(round(action.frame_range[0]))  # Blender 5.0 expects an int for NLA strip start frame
+        track.strips.new(action.name, start_frame, action)
+else:
+    print("No armature found in the scene. Cannot assign actions for export.")
+
 # Export the combined actions to a GLB file
 # select just the armature and mesh objects we want to export
 export_objects = [obj for obj in bpy.context.scene.objects if obj.type in ['ARMATURE', 'MESH']]
@@ -50,6 +78,7 @@ bpy.ops.export_scene.gltf(
     filepath=output_file,
     export_format="GLB",
     export_animations=True,
+    export_animation_mode='ACTIONS',
     export_nla_strips=False,  # Export actions instead of NLA strips
     use_selection=True,
     export_yup=True, # Blender uses Z-up, three.js uses Y-up
