@@ -59,6 +59,10 @@ if armature:
     anim_data = armature.animation_data_create()
 
     for action in bpy.data.actions:
+        if "EmptyAction" in action.name:
+            print(f"Skipping invalid action: {action.name}")
+            continue
+
         track = anim_data.nla_tracks.new()
         track.name = action.name
 
