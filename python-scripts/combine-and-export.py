@@ -23,7 +23,7 @@ if HARD_CODED:
     rig_type = "spider"
     base_dir = r"C:\git\mesh2motion-assets\rigs\\"
     blend_dir = base_dir + rig_type + "\\"
-    output_file = blend_dir + r"spider-animations.glb"
+    output_file = blend_dir + rig_type + r"-animations.glb"
 else: 
     current_file_path = bpy.data.filepath  # e.g., "C:\git\mesh2motion-assets\rigs\rig-kaiju.blend"
     base_dir = os.path.dirname(current_file_path)  # e.g., "C:\git\mesh2motion-assets\rigs"
@@ -85,6 +85,7 @@ bpy.ops.export_scene.gltf(
     export_animation_mode='ACTIONS',
     export_nla_strips=False,  # Export actions instead of NLA strips
     use_selection=True,
+    export_apply=True, # apply modifiers to mesh (like subdivision) before export
     export_yup=True, # Blender uses Z-up, three.js uses Y-up
     export_def_bones=True, # only export deformation bones
     use_visible=True, # hides bone shape collection objects
