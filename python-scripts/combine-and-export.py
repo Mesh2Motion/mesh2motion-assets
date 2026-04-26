@@ -17,18 +17,10 @@ import sys
 # 6. You can put the GLB file in the static > animations folder overwriting the old rig one
 
 
-HARD_CODED = False
-
-if HARD_CODED:
-    rig_type = "spider"
-    base_dir = r"C:\git\mesh2motion-assets\rigs\\"
-    blend_dir = base_dir + rig_type + "\\"
-    output_file = blend_dir + rig_type + r"-animations.glb"
-else: 
-    current_file_path = bpy.data.filepath  # e.g., "C:\git\mesh2motion-assets\rigs\rig-kaiju.blend"
-    base_dir = os.path.dirname(current_file_path)  # e.g., "C:\git\mesh2motion-assets\rigs"
-    blend_filename = os.path.basename(current_file_path)  # e.g., "rig-kaiju.blend"
-    rig_type = blend_filename.replace("rig-", "").replace(".blend", "")  # e.g., "kaiju"
+current_file_path = bpy.data.filepath  # e.g., "C:\git\mesh2motion-assets\rigs\rig-kaiju.blend"
+base_dir = os.path.dirname(current_file_path)  # e.g., "C:\git\mesh2motion-assets\rigs"
+blend_filename = os.path.basename(current_file_path)  # e.g., "rig-kaiju.blend"
+rig_type = blend_filename.replace("rig-", "").replace(".blend", "")  # e.g., "kaiju"
 
 
 
