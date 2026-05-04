@@ -1,0 +1,45 @@
+# Rigify notes with Blender 5.1
+By default when you export a blender rig using the Rigify add-on, Blender doesn't do a lot of parenting correctly for the bones for a game engine. Blender uses "chains" for helping with IK and FK bones, but this also makes things like the shoulders and arms disconnected from the spine. We don't want that in our final exported "deform" bones. Follow these steps to help correctly parent them for Mesh2Motion. The GLB file included in this folder will already have this fix.
+
+0. Make sure the Rigify add-on is enabled in Blender preferences
+1. Generate the "Rigify" rig normally in Blender
+2. Use the automatic weight painting feature by selecting the mesh, then the armature, then Ctrl+P to add automatic weights
+3. Select the armature so it is the only thing selected in Blender
+2. Run this Python script in the "text editor" area in Blender.
+
+
+import bpy
+
+# Find the armature automatically instead of using active object
+arm = bpy.context.object
+
+if arm is None or arm.type != 'ARMATURE':
+    print("ERROR: Please only select the armature object.")
+else:
+    bpy.context.view_layer.objects.active = arm
+    bpy.ops.object.mode_set(mode='EDIT')
+    bones = arm.data.edit_bones
+
+   # build out map of what bone and what to parent it to
+    reparent = {
+        "DEF-shoulder.L": "DEF-spine.003",
+        "DEF-shoulder.R": "DEF-spine.003",
+        "DEF-upper_arm.L": "DEF-shoulder.L",
+        "DEF-upper_arm.R": "DEF-shoulder.R",
+        "DEF-thigh.L": "DEF-pelvis.L",
+        "DEF-thigh.R": "DEF-pelvis.R",
+        "DEF-pelvis.L": "DEF-spine",
+        "DEF-pelvis.R": "DEF-spine",
+    }
+
+    # do the parenting
+    for child_name, parent_name in reparent.items():
+        if child_name in bones and parent_name in bones:
+            bones[child_name].parent = bones[parent_name]
+            bones[child_name].use_connect = False
+            print(f"Re-parented {child_name} → {parent_name}")
+        else:
+            print(f"SKIPPED (not found): {child_name} or {parent_name}")
+
+    bpy.ops.object.mode_set(mode='OBJECT')
+    print("Done.")
