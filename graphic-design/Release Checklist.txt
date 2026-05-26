@@ -1,0 +1,35 @@
+# Release checklist 
+Update marketing news site with release notes (main -> release)
+Push out application changes (main -> release)
+
+
+## send out message to mailing list
+- Currently using Mailerlite platform to send emails
+- Each email is called a "campaign" in Mailerlite
+
+Some campaign details to help me build these out faster when I forget
+
+Subject: Mesh2Motion 11 Released
+Preheader: Highlights and links for what is in the release.
+
+
+
+
+## Optionally upload YouTube video with information
+- Create thumbnail from assets video thumbnail file
+
+
+## Post update to social media
+
+Mesh2Motion Release 11 Out 🎉 
+
+- Switch out default models for a rig (13 added)
+- Add new Fish rig (shark and whale variations)
+- Many other small improvements
+
+Check out the full release 11 notes with all changes: 
+https://mesh2motion.org/news
+
+Try it out and any feedback welcome: https://app.mesh2motion.org
+
+(add screenshot/video here below it all)
