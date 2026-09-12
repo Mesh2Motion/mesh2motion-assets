@@ -1,9 +1,33 @@
+# Remote control your motion capture from your phone
+# Allows you to stay engaged in your mocap work instead of pressing
+# buttons in blender to constantly start and stop recordings
+# --------------------------------------------------
+# uses your local WIFI network
+# this requires the mocopi blender receiver plugin since this
+# targets that record python operation call
+
+# Instructions
+# -----------------------------
+# Make sure the mocopi blender receiver plugin is active
+# https://github.com/sony/mocopi-receiver-plugin-blender
+
+# Load this script in a Blender panel. 
+# Look at the mocopi plug in to find the public IP address we
+# will visit on your phone (e.g. http://192.168.1.165:3333)
+# make sure to put port 3333 on the end to connect
+# Make sure your phone is your WIFI network
+# Run this script
+# with the play button on the python panel.
+# try to access URL from your phone
+# toggling the record button should start new recordings and new takes
+
 import bpy
 import threading
 import queue
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-PORT = 8080
+
+PORT = 3333
 
 # Requests from the HTTP thread go here
 request_queue = queue.Queue()
