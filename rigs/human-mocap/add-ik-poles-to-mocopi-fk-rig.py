@@ -12,15 +12,17 @@ LEG_POLE_DISTANCE = 0.7
 # Set this to True if you want to replace/rebuild existing poles.
 RECREATE_POLES = True
 
-# Extra vertical lift for knee poles so they don't end up
-# buried near the ground.
-KNEE_POLE_VERTICAL_OFFSET = 0.8
+# Extra vertical lift for knee poles, in case you want them to sit
+# slightly above/below the actual knee height for visibility. The
+# direction-based placement below already puts the pole AT knee
+# height, so 0 is a sane default - nudge it a little if you want.
+KNEE_POLE_VERTICAL_OFFSET = 0.0
 
 # World-space directions the poles sit in, relative to the elbow/
 # knee joint at rest. If these end up mirrored (front <-> back)
 # on your rig, just flip the sign.
 ELBOW_POLE_DIRECTION = Vector((0, 1, 0))   # behind the elbow
-KNEE_POLE_DIRECTION = Vector((0, -1, 0))   # in front of the knee
+KNEE_POLE_DIRECTION = Vector((0, -1, 0))    # in front of the knee
 
 POLES = [
     {"pole": "l_elbow_pole", "lower": "l_low_arm", "distance": ARM_POLE_DISTANCE, "direction": ELBOW_POLE_DIRECTION},
@@ -134,7 +136,7 @@ def bake_pole_animation(armature, offsets):
             world_pos = upper_pb.matrix @ info["offset"]
 
             if info["knee"]:
-                world_pos.y += KNEE_POLE_VERTICAL_OFFSET
+                world_pos.z += KNEE_POLE_VERTICAL_OFFSET
 
             parent = pole_pb.parent
             if parent:
