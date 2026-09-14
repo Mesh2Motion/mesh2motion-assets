@@ -7,7 +7,7 @@ rig append, prep scripts, retarget and bake.
 
 1. `python build.py` — copies the current `../scripts/*.py` and the reference
    `.blend` into the addon package and writes
-   `dist/mocopi_m2m_retarget-0.1.0.zip`.
+   `dist/mocopi_m2m_retarget-0.1.2.zip`.
 2. In Blender 4.2+, drag the zip into the window, or
    **Edit > Preferences > Add-ons > Install from Disk**.
 3. Enable **Mocopi to Mesh2Motion**.
@@ -114,6 +114,26 @@ attribution and the list of changes. The auto-detection, naming schemes and UI
 were all dropped; the mechanism — helper bones in a throwaway copy of the
 source armature, constraints on the target, chunked bake, curve stitch and
 cleanup — is intact.
+
+## Blender version
+
+Blender 4.4 introduced slotted actions and 5.0 removed `Action.fcurves`
+entirely, so `retarget_engine.py` reads and writes F-curves through
+`fcurves_for(action, slot)`, which uses
+`bpy_extras.anim_utils.action_get_channelbag_for_slot` when it exists and
+falls back to the legacy `action.fcurves` otherwise.
+
+The chunked bake also no longer builds its final action from scratch — the
+first chunk's action is kept and the later chunks are appended onto its
+curves. That sidesteps creating a slot and channelbag by hand, which is the
+part that differs most between versions.
+
+5.0 also removed `Bone.select` and moved selection onto the pose bone, so
+`set_bone_selected()` sets whichever one the running version exposes. This
+matters more than it looks: `nla.bake(only_selected=True)` reads bone
+selection, so getting it wrong bakes nothing rather than erroring. The
+retarget now counts how many bones it managed to select and fails loudly if
+that is zero.
 
 ## Errors
 

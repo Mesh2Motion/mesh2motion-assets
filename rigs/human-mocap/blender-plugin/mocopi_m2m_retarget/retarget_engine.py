@@ -31,6 +31,48 @@ from mathutils import Matrix, Vector
 
 RETARGET_ID = "_M2M_RETARGET"
 
+# ----------------------------------------------------------------------
+# Action / F-curve compatibility
+#
+# Blender 4.4 introduced slotted actions and 5.0 removed ``Action.fcurves``
+# outright, so curves now live on a channelbag belonging to a slot. Everything
+# below goes through these two helpers instead of touching ``action.fcurves``.
+# ----------------------------------------------------------------------
+
+def _anim_utils():
+    try:
+        from bpy_extras import anim_utils
+    except ImportError:
+        return None
+    return anim_utils if hasattr(anim_utils, "action_get_channelbag_for_slot") else None
+
+
+def current_slot(obj):
+    """The action slot assigned to obj, or None on pre-4.4 Blender."""
+    anim_data = obj.animation_data
+    if anim_data is None:
+        return None
+    return getattr(anim_data, "action_slot", None)
+
+
+def fcurves_for(action, slot=None):
+    """The F-curve collection of an action, slotted or legacy.
+
+    Supports .new(), .find(), .remove() and iteration on every version.
+    """
+    if action is None:
+        return None
+
+    if slot is not None:
+        anim_utils = _anim_utils()
+        if anim_utils is not None:
+            channelbag = anim_utils.action_get_channelbag_for_slot(action, slot)
+            if channelbag is not None:
+                return channelbag.fcurves
+
+    # Pre-4.4, or a legacy action.
+    return getattr(action, "fcurves", None)
+
 # copy_location: True forces a COPY_LOCATION constraint on the target bone,
 # False forbids one, None leaves it to the root-bone detection below.
 BonePair = namedtuple("BonePair", "source target copy_location")
@@ -87,6 +129,27 @@ def find_pose_bone(armature, name):
             return candidate
 
     return None
+
+
+def set_bone_selected(armature, bone_name, selected=True):
+    """Select a bone for baking, across Blender versions.
+
+    Blender 5.0 removed ``Bone.select`` (and ``select_head`` / ``select_tail``)
+    and put a ``select`` property on the pose bone instead. Everything before
+    that keeps it on the bone. ``nla.bake(only_selected=True)`` reads whichever
+    one the version uses, so this has to set the right one.
+    """
+    pose_bone = armature.pose.bones.get(bone_name)
+    if pose_bone is not None and hasattr(pose_bone, "select"):
+        pose_bone.select = selected
+        return True
+
+    bone = armature.data.bones.get(bone_name)
+    if bone is not None and hasattr(bone, "select"):
+        bone.select = selected
+        return True
+
+    return False
 
 
 @contextmanager
@@ -199,10 +262,16 @@ def get_and_reset_pose_rotations(armature):
 def clean_animation(armature_source):
     """Drop object-level transform curves so auto scaling is not fighting them."""
     deletable = ("location", "rotation_euler", "rotation_quaternion", "scale")
-    action = armature_source.animation_data.action
-    for fcurve in list(action.fcurves):
+
+    curves = fcurves_for(
+        armature_source.animation_data.action, current_slot(armature_source)
+    )
+    if curves is None:
+        return
+
+    for fcurve in list(curves):
         if fcurve.data_path in deletable:
-            action.fcurves.remove(fcurve)
+            curves.remove(fcurve)
 
 
 def scale_armature(armature_source, armature_target, pairs, root_bones):
@@ -244,15 +313,25 @@ def scale_armature(armature_source, armature_target, pairs, root_bones):
 
 
 def read_anim_start_end(armature):
+    action = armature.animation_data.action
+    curves = fcurves_for(action, current_slot(armature))
+
     frame_start = frame_end = None
 
-    for fcurve in armature.animation_data.action.fcurves:
-        for key in fcurve.keyframe_points:
-            frame = key.co.x
-            if frame_start is None or frame < frame_start:
-                frame_start = frame
-            if frame_end is None or frame > frame_end:
-                frame_end = frame
+    if curves is not None:
+        for fcurve in curves:
+            for key in fcurve.keyframe_points:
+                frame = key.co.x
+                if frame_start is None or frame < frame_start:
+                    frame_start = frame
+                if frame_end is None or frame > frame_end:
+                    frame_end = frame
+
+    if frame_start is None:
+        # Fall back to whatever Blender reports for the action as a whole.
+        frame_range = getattr(action, "frame_range", None)
+        if frame_range is not None:
+            frame_start, frame_end = frame_range[0], frame_range[1]
 
     return frame_start, frame_end
 
@@ -310,10 +389,33 @@ def copy_rest_pose(armature_source):
 # Bake
 # ----------------------------------------------------------------------
 
+def should_drop_curve(fcurve, location_bones):
+    """Curves that never make it into the final action.
+
+    Scale is never retargeted, and location is only kept for bones that are
+    actually driven by position -- everything else inherits it through the
+    hierarchy and would fight the rig if it had its own location keys.
+    """
+    if fcurve.data_path.endswith("scale"):
+        return True
+
+    if fcurve.data_path.endswith("location"):
+        parts = fcurve.data_path.split('"')
+        if len(parts) != 3:
+            return True
+        if parts[1] not in location_bones:
+            return True
+
+    return False
+
+
 def bake_animation(armature_source, armature_target, location_bones):
     """Bake the constrained target armature down to keyframes.
 
     Baked in chunks: several short bakes are far faster than one long one.
+    The first chunk's action becomes the final one and the rest are appended
+    onto its curves, which avoids having to build an action (and, on Blender
+    4.4+, a slot and channelbag) from scratch.
     """
     frame_split = 25
 
@@ -324,7 +426,7 @@ def bake_animation(armature_source, armature_target, location_bones):
 
     set_active(armature_target)
 
-    actions_all = []
+    chunks = []  # (action, slot)
     current_step = 0
     steps = int((frame_end - frame_start) / frame_split) + 1
 
@@ -350,8 +452,12 @@ def bake_animation(armature_source, armature_target, location_bones):
                 bake_types={"POSE"},
             )
 
-            armature_target.animation_data.action.name = "M2M_RETARGETING_" + str(frame)
-            actions_all.append(armature_target.animation_data.action)
+            action = armature_target.animation_data.action
+            if action is None:
+                continue
+
+            action.name = "M2M_RETARGETING_" + str(frame)
+            chunks.append((action, current_slot(armature_target)))
 
             current_step += 1
             if steps != current_step:
@@ -359,55 +465,61 @@ def bake_animation(armature_source, armature_target, location_bones):
 
         bpy.ops.object.mode_set(mode="OBJECT")
 
-        if not actions_all:
+        if not chunks:
             return None
 
-        # Count keys per curve so the final curves can be sized in one go.
-        key_counts = {}
-        for action in actions_all:
-            for fcurve in action.fcurves:
-                key = fcurve.data_path + str(fcurve.array_index)
-                key_counts[key] = key_counts.get(key, 0) + len(fcurve.keyframe_points)
+        action_final, slot_final = chunks[0]
+        curves_final = fcurves_for(action_final, slot_final)
 
-        action_final = bpy.data.actions.new(name="M2M_RETARGETING_FINAL")
-        action_final.use_fake_user = True
-        armature_target.animation_data_create().action = action_final
-
-        # Stitch the baked chunks back into one action.
-        for fcurve in actions_all[0].fcurves:
-            if fcurve.data_path.endswith("scale"):
-                continue
-
-            if fcurve.data_path.endswith("location"):
-                bone_name = fcurve.data_path.split('"')
-                if len(bone_name) != 3:
-                    continue
-                if bone_name[1] not in location_bones:
-                    continue
-
-            curve_final = action_final.fcurves.new(
-                data_path=fcurve.data_path,
-                index=fcurve.array_index,
-                action_group=fcurve.group.name,
+        if curves_final is None:
+            raise RetargetError(
+                "Could not read the baked action's F-curves. "
+                "This Blender version may store animation differently than expected."
             )
-            keyframe_points = curve_final.keyframe_points
-            keyframe_points.add(key_counts[fcurve.data_path + str(fcurve.array_index)])
 
-            index = 0
-            for action in actions_all:
-                source_curve = action.fcurves.find(
+        # Throw away the curves that should not survive.
+        for fcurve in list(curves_final):
+            if should_drop_curve(fcurve, location_bones):
+                curves_final.remove(fcurve)
+
+        # Append every later chunk onto the first one's curves.
+        remaining = chunks[1:]
+        for fcurve in curves_final:
+            for keyframe in fcurve.keyframe_points:
+                keyframe.interpolation = "LINEAR"
+
+            sources = []
+            extra_keys = 0
+            for action, slot in remaining:
+                curves = fcurves_for(action, slot)
+                if curves is None:
+                    continue
+                source_curve = curves.find(
                     data_path=fcurve.data_path, index=fcurve.array_index
                 )
                 if source_curve is None:
                     continue
-                for kp in source_curve.keyframe_points:
-                    keyframe_points[index].co.x = kp.co.x
-                    keyframe_points[index].co.y = kp.co.y
-                    keyframe_points[index].interpolation = "LINEAR"
+                sources.append(source_curve)
+                extra_keys += len(source_curve.keyframe_points)
+
+            if not extra_keys:
+                continue
+
+            index = len(fcurve.keyframe_points)
+            fcurve.keyframe_points.add(extra_keys)
+
+            for source_curve in sources:
+                for keyframe in source_curve.keyframe_points:
+                    target_keyframe = fcurve.keyframe_points[index]
+                    target_keyframe.co.x = keyframe.co.x
+                    target_keyframe.co.y = keyframe.co.y
+                    target_keyframe.interpolation = "LINEAR"
                     index += 1
 
+            fcurve.update()
+
         # Drop keyframes that sit between two identical neighbours.
-        for fcurve in action_final.fcurves:
+        for fcurve in curves_final:
             if len(fcurve.keyframe_points) <= 2:
                 continue
 
@@ -415,24 +527,34 @@ def bake_animation(armature_source, armature_target, location_bones):
             kp_pre = fcurve.keyframe_points[1]
             to_delete = []
 
-            for kp in fcurve.keyframe_points[2:]:
-                if round(kp_pre_pre.co.y, 5) == round(kp_pre.co.y, 5) == round(kp.co.y, 5):
+            for keyframe in fcurve.keyframe_points[2:]:
+                if round(kp_pre_pre.co.y, 5) == round(kp_pre.co.y, 5) == round(keyframe.co.y, 5):
                     to_delete.append(kp_pre)
                 kp_pre_pre = kp_pre
-                kp_pre = kp
+                kp_pre = keyframe
 
-            for kp in reversed(to_delete):
-                fcurve.keyframe_points.remove(kp)
+            for keyframe in reversed(to_delete):
+                fcurve.keyframe_points.remove(keyframe)
 
-        for action in actions_all:
+        # Put the combined action back on the target before the rest are freed.
+        anim_data = armature_target.animation_data
+        anim_data.action = action_final
+
+        if hasattr(anim_data, "action_slot"):
+            if slot_final is not None:
+                try:
+                    anim_data.action_slot = slot_final
+                except (TypeError, RuntimeError):
+                    pass
+            if anim_data.action_slot is None and getattr(anim_data, "action_suitable_slots", None):
+                anim_data.action_slot = anim_data.action_suitable_slots[0]
+
+        action_final.use_fake_user = True
+
+        for action, _slot in remaining:
             bpy.data.actions.remove(action)
 
         print("[mocopi-m2m] Retargeting time:", round(time.time() - start_time, 2), "seconds")
-
-        # Blender 4.4+ slotted actions.
-        anim_data = armature_target.animation_data
-        if hasattr(anim_data, "action_slot") and anim_data.action_suitable_slots:
-            anim_data.action_slot = anim_data.action_suitable_slots[0]
 
         return action_final
 
@@ -553,6 +675,7 @@ def retarget(armature_source, armature_target, pairs, auto_scale=True, use_pose=
         bpy.ops.object.select_all(action="DESELECT")
 
         # Constrain the target bones to those helpers and select them for baking.
+        selected_count = 0
         for pair in resolved:
             bone_target = armature_target.pose.bones.get(pair.target)
 
@@ -567,7 +690,16 @@ def retarget(armature_source, armature_target, pairs, auto_scale=True, use_pose=
                 constraint.target = armature_source
                 constraint.subtarget = pair.source
 
-            armature_target.data.bones.get(pair.target).select = True
+            if set_bone_selected(armature_target, pair.target, True):
+                selected_count += 1
+
+        # nla.bake only touches selected bones, so nothing selected means a
+        # silently empty result rather than an error.
+        if not selected_count:
+            raise RetargetError(
+                "Could not select any target bones for baking. "
+                "This Blender version may expose bone selection differently."
+            )
 
         action_final = bake_animation(armature_source, armature_target, location_bones)
 
