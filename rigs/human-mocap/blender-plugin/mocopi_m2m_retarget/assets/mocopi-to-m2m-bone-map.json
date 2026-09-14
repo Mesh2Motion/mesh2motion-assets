@@ -1,0 +1,39 @@
+{
+    "format": "mocopi-m2m-bone-map",
+    "version": 1,
+    "_comment": [
+        "Explicit Mocopi BVH -> Mesh2Motion bone map. Source names are Mocopi",
+        "joint names (plus the four pole bones add-ik-bones.py creates).",
+        "Target names are bones on the Mesh2Motion rig.",
+        "",
+        "copy_location is optional per entry:",
+        "  true  - always copy world position (IK controls need this)",
+        "  false - never copy position, rotation only",
+        "  omitted - let the engine decide from the target hierarchy",
+        "",
+        "Bone lookup is case-insensitive, so casing here is for readability."
+    ],
+    "options": {
+        "auto_scale": true,
+        "use_pose": "REST"
+    },
+    "bones": [
+        { "source": "root", "target": "CTRL_Hips", "copy_location": true },
+
+        { "source": "torso_1", "target": "DRV_spine.001" },
+        { "source": "torso_2", "target": "DRV_spine_002" },
+        { "source": "torso_3", "target": "DRV_spine.003" },
+        { "source": "neck_2", "target": "DRV_neck" },
+        { "source": "head", "target": "DRV_head" },
+
+        { "source": "l_hand", "target": "CTRL_Arm_L", "copy_location": true },
+        { "source": "r_hand", "target": "CTRL_Arm_R", "copy_location": true },
+        { "source": "l_elbow_pole", "target": "POLEARM_L", "copy_location": true },
+        { "source": "r_elbow_pole", "target": "POLEARM_R", "copy_location": true },
+
+        { "source": "l_foot", "target": "CTRL_ILLEG_L", "copy_location": true },
+        { "source": "r_foot", "target": "CTRL_ILLEG_R", "copy_location": true },
+        { "source": "l_knee_pole", "target": "POLE_Leg_L", "copy_location": true },
+        { "source": "r_knee_pole", "target": "POLE_Leg_R", "copy_location": true }
+    ]
+}

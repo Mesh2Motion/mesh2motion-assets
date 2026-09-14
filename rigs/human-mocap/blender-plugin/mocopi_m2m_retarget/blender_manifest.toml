@@ -1,0 +1,24 @@
+schema_version = "1.0.0"
+
+id = "mocopi_m2m_retarget"
+version = "0.1.0"
+name = "Mocopi to Mesh2Motion"
+tagline = "Import Mocopi BVH and retarget it onto the Mesh2Motion rig"
+maintainer = "Scotty P"
+copyright = ["2026 Scotty P", "2019-2024 Rokoko Electronics ApS"]
+type = "add-on"
+
+license = ["SPDX:GPL-3.0-or-later"]
+blender_version_min = "4.2.0"
+
+tags = ["Animation", "Rigging", "Import-Export"]
+
+[permissions]
+files = "Read Mocopi BVH captures and the bundled reference IK rig"
+
+[build]
+paths_exclude_pattern = [
+  "__pycache__/",
+  "/.git/",
+  "*.blend1",
+]
