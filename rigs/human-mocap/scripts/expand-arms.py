@@ -15,6 +15,6 @@ for lower_arm_name, hand_name in [
 
     if lower_arm and hand:
         direction = (lower_arm.tail - lower_arm.head).normalized()
-        lower_arm.tail = lower_arm.head + direction * (lower_arm.length * 1.15)
+        lower_arm.tail = lower_arm.head + direction * (lower_arm.length * 1.35)
 
         hand.use_connect = True

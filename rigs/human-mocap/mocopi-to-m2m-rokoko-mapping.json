@@ -2,77 +2,41 @@
     "rokoko_custom_names": true,
     "version": 1,
     "bones": {
-        "custom_bone_torso_2": [
-            "torso_2",
-            "spine_02"
-        ],
-        "custom_bone_torso_3": [
-            "torso_3",
-            "spine_03"
-        ],
-        "custom_bone_neck_1": [
-            "neck_1",
-            "neck_01"
-        ],
-        "custom_bone_l_up_arm": [
-            "l_up_arm",
-            "upperarm_l"
-        ],
-        "custom_bone_l_low_arm": [
-            "l_low_arm",
-            "lowerarm_l"
-        ],
-        "custom_bone_r_up_arm": [
-            "r_up_arm",
-            "upperarm_r"
-        ],
-        "custom_bone_r_low_arm": [
-            "r_low_arm",
-            "lowerarm_r"
-        ],
-        "custom_bone_l_up_leg": [
-            "l_up_leg",
-            "thigh_l"
-        ],
-        "custom_bone_l_low_leg": [
-            "l_low_leg",
-            "calf_l"
-        ],
-        "leftUpLeg": [
-            "foot_l"
-        ],
-        "custom_bone_r_up_leg": [
-            "r_up_leg",
-            "thigh_r"
-        ],
-        "custom_bone_r_low_leg": [
-            "r_low_leg",
-            "calf_r"
-        ],
-        "custom_bone_torso_1": [
-            "torso_1",
-            "pelvis"
-        ],
         "custom_bone_root": [
-            "root",
-            "drv_hips",
             "ctrl_hips"
         ],
         "custom_bone_l_elbow_pole": [
-            "l_elbow_pole",
             "polearm_l"
         ],
         "custom_bone_r_elbow_pole": [
-            "r_elbow_pole",
             "polearm_r"
         ],
+        "custom_bone_torso_1": [
+            "drv_spine.001"
+        ],
+        "custom_bone_torso_2": [
+            "drv_spine_002"
+        ],
+        "custom_bone_torso_3": [
+            "drv_spine.003"
+        ],
+        "custom_bone_neck_2": [
+            "drv_neck"
+        ],
+        "head": [
+            "drv_head"
+        ],
+        "leftHand": [
+            "ctrl_arm_l"
+        ],
+        "rightHand": [
+            "ctrl_arm_r"
+        ],
         "custom_bone_l_knee_pole": [
-            "l_knee_pole",
-            "pole_leg_r"
+            "pole_leg_l"
         ],
         "custom_bone_r_knee_pole": [
-            "r_knee_pole",
-            "pole_leg_l"
+            "pole_leg_r"
         ]
     },
     "shapes": {}
