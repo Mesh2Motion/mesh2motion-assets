@@ -49,13 +49,30 @@
             "r_low_leg",
             "calf_r"
         ],
-        "custom_bone_root": [
-            "root",
-            "root"
-        ],
         "custom_bone_torso_1": [
             "torso_1",
             "pelvis"
+        ],
+        "custom_bone_root": [
+            "root",
+            "drv_hips",
+            "ctrl_hips"
+        ],
+        "custom_bone_l_elbow_pole": [
+            "l_elbow_pole",
+            "polearm_l"
+        ],
+        "custom_bone_r_elbow_pole": [
+            "r_elbow_pole",
+            "polearm_r"
+        ],
+        "custom_bone_l_knee_pole": [
+            "l_knee_pole",
+            "pole_leg_r"
+        ],
+        "custom_bone_r_knee_pole": [
+            "r_knee_pole",
+            "pole_leg_l"
         ]
     },
     "shapes": {}
