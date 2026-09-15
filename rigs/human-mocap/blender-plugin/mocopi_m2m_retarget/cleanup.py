@@ -15,7 +15,10 @@ Ramer-Douglas-Peucker with a vertical error bound: a key survives only if
 dropping it would move the curve further than the tolerance at some frame.
 Tolerances are given in real units -- metres for position, degrees for
 rotation -- so half a degree means no bone ever ends up more than half a
-degree from where it was.
+degree from where it was. That holds only because the surviving keys get
+tangents aimed along clamped neighbour chords; see ``chord_handles`` for
+what auto-clamped handles did to this guarantee, and for the stepped-signal
+ringing that a raw chord tangent traded it for.
 
 How much that removes depends entirely on how fast the bone is moving, which
 is the point. Measured on synthetic 300-frame channels at 0.5 degrees: a
@@ -31,10 +34,20 @@ collapse to a single key, and the position channels are blurred and decimated
 several times harder than a real bone would tolerate. On a dense capture this
 is most of the keys on the rig.
 
+**Delete Non-Extreme Keyframes** is the odd one out: it is not error-bounded
+and it is not automatic. Blender tags every key with a *type* -- Keyframe,
+Breakdown, Moving Hold, Extreme, Jitter -- which the evaluator ignores but
+which is how an animator records that a pose is load-bearing. Mark the
+extremes by hand, run the pass, and every channel is thinned down to exactly
+those frames. It is the only pass here making a judgement about the
+performance rather than about the numbers, which is why it is a button and
+never an import option: at import time there is nothing marked yet.
+
 Order matters. Smooth first: smoothing works on key values, so it wants the
 dense curve. Then root motion, then the pole pass, then decimate last -- root
 motion writes a key on every frame of every control by design, including the
-poles, so anything that thins them has to come after it.
+poles, so anything that thins them has to come after it. The extreme pass sits
+outside that order entirely; it runs whenever the marks are ready.
 
 Both passes ignore the Mesh2Motion export skeleton, which holds no keyframes
 at all -- its bones are driven by Copy Transforms constraints off the DRV rig.
@@ -423,20 +436,114 @@ def tolerance_for(data_path, tolerance_location, tolerance_rotation_deg):
     return radians
 
 
+def chord_handles(points):
+    """Aim every Bezier handle along a clamped chord tangent.
+
+    This is what keeps the decimation tolerance honest. Two failure modes had
+    to be dodged, and they pull in opposite directions.
+
+    **Auto-clamped flattens the ends.** ``AUTO_CLAMPED`` zeroes the handles of
+    any key that is a local extreme among its neighbours, and a key with only
+    one neighbour -- either end of the curve -- always qualifies. A channel
+    that decimates to two keys therefore gets two flat handles and the segment
+    comes out as a full ease-in/ease-out S-curve, not the straight line the RDP
+    pass measured its error against. On a straight 0 -> 2.4m ramp over 120
+    frames at a 1mm tolerance that was 229mm off at the quarter points -- 229x
+    what was asked for. Plain ``AUTO`` behaves identically. It is worst where
+    decimation does best, since the channels that collapse to two or three
+    keys are the near-still and slow-drifting ones.
+
+    **A raw chord tangent overshoots corners.** Taking the tangent straight
+    from the chord through both neighbours (Catmull-Rom's) fixes the ramp
+    exactly, but it rings on a stepped signal: 27mm on a 200mm staircase at
+    the same 1mm tolerance, because the tangent at a plateau key points along
+    the step it is about to take.
+
+    So the tangent is the chord, clamped the way a monotone cubic clamps it
+    (Fritsch-Carlson): zero at a local extreme, and never steeper than three
+    times the shallower of the two adjacent secants. On a straight line the
+    secants are equal and the clamp does not bind, so the result is exact. On
+    a plateau the secants disagree and the tangent goes flat, which is the one
+    thing ``AUTO_CLAMPED`` got right. The ends take their one-sided secant
+    rather than zero, which is the thing it got wrong.
+
+    Handles must be FREE for Blender to leave them alone; ``fcurve.update()``
+    recomputes the AUTO family but not this one.
+
+    For the two error-bounded passes this is a correctness fix. For
+    ``delete_non_extreme`` it is a look choice instead -- there is no bound to
+    hold between two poses an animator marked, and flat handles would give the
+    held-extreme feel of traditional blocking. It shares the code path for
+    consistency; splitting it is a one-line change if that look is wanted.
+    """
+    count = len(points)
+
+    if count == 0:
+        return
+
+    if count == 1:
+        point = points[0]
+        frame, value = point.co
+        point.handle_left_type = "FREE"
+        point.handle_right_type = "FREE"
+        point.handle_left = (frame - 1.0, value)
+        point.handle_right = (frame + 1.0, value)
+        return
+
+    frames = [point.co[0] for point in points]
+    values = [point.co[1] for point in points]
+
+    def secant(lower, upper):
+        span = frames[upper] - frames[lower]
+        return ((values[upper] - values[lower]) / span) if span else 0.0
+
+    for index, point in enumerate(points):
+        if index == 0:
+            slope = secant(0, 1)
+        elif index == count - 1:
+            slope = secant(count - 2, count - 1)
+        else:
+            before = secant(index - 1, index)
+            after = secant(index, index + 1)
+
+            if before * after <= 0.0:
+                # A local extreme, or a flat neighbour: anything but zero here
+                # overshoots on the way in or on the way out.
+                slope = 0.0
+            else:
+                slope = secant(index - 1, index + 1)
+                limit = 3.0 * min(abs(before), abs(after))
+                if abs(slope) > limit:
+                    slope = limit if slope > 0.0 else -limit
+
+        left = (frames[index] - frames[max(0, index - 1)]) / 3.0
+        right = (frames[min(count - 1, index + 1)] - frames[index]) / 3.0
+        if index == 0:
+            left = right
+        if index == count - 1:
+            right = left
+
+        point.handle_left_type = "FREE"
+        point.handle_right_type = "FREE"
+        point.handle_left = (frames[index] - left, values[index] - slope * left)
+        point.handle_right = (frames[index] + right, values[index] + slope * right)
+
+
 def set_interpolation(points, interpolation):
     """Set every surviving key's interpolation, unless asked to leave it.
 
     Sparse keys left on LINEAR read as a series of straight segments, which is
-    worse to look at than the jitter that was just removed.
+    worse to look at than the jitter that was just removed -- so BEZIER is the
+    default, with ``chord_handles`` keeping it inside the stated tolerance.
     """
     if interpolation == "KEEP":
         return
 
     for point in points:
         point.interpolation = interpolation
-        if interpolation == "BEZIER":
-            point.handle_left_type = "AUTO_CLAMPED"
-            point.handle_right_type = "AUTO_CLAMPED"
+
+    if interpolation == "BEZIER":
+        chord_handles(points)
 
 
 def decimate_curve(fcurve, tolerance, collapse_static=True, interpolation="BEZIER"):
@@ -511,6 +618,83 @@ def decimate_curves(curves, tolerance_location, tolerance_rotation_deg,
         total_after += after
 
     return total_before, total_after, len(curves)
+
+
+# ----------------------------------------------------------------------
+# Extremes
+# ----------------------------------------------------------------------
+
+EXTREME_KEY_TYPE = "EXTREME"
+
+
+def extreme_frames(armature):
+    """Sorted frames carrying an Extreme-typed key, anywhere in the action.
+
+    Gathered across the **whole** action rather than the caller's filtered
+    curve set. Marking a pose in the Dope Sheet is meant to pin that frame for
+    the rig, not only for whichever channel the mark happened to land on -- so
+    a mark on the hips keeps frame 24 on the elbows too.
+
+    Frames are rounded to integers. A bake lands on whole frames, and matching
+    one float frame against another is a way to lose a key to 1e-7.
+
+    Types are read one key at a time rather than through ``foreach_get``. The
+    type is an enum, so it is the one property in this module whose bulk-read
+    buffer is version-dependent -- and getting it wrong here would not be
+    slow, it would delete the wrong keys.
+    """
+    frames = set()
+
+    for fcurve in action_curves(armature):
+        for point in fcurve.keyframe_points:
+            if point.type == EXTREME_KEY_TYPE:
+                frames.add(int(round(point.co[0])))
+
+    return sorted(frames)
+
+
+def snap_curve_to_frames(fcurve, frames, interpolation="BEZIER"):
+    """Reduce a curve to exactly ``frames``. Returns (before, after, inserted).
+
+    Where the curve has no key on a wanted frame it is sampled there first, so
+    every channel comes out on the same frame set holding the pose it was
+    already showing at that frame. Without this, a channel that had been
+    decimated away from the extreme frames would either lose everything or
+    have to be skipped, and the rig would come out on ragged frame sets.
+
+    Sampling is done up front, because ``evaluate`` has to read the curve as
+    it stands -- before anything has been inserted into it or removed from it.
+
+    Keyframe *types* are left alone. A key the sampling step inserts arrives
+    as a plain Keyframe rather than an Extreme, which keeps the pass from
+    overwriting how the animator tagged their own keys. Deletion is by frame
+    and not by type, so re-running is still a no-op.
+    """
+    points = fcurve.keyframe_points
+    before = len(points)
+
+    if before == 0:
+        return 0, 0, 0
+
+    wanted = set(frames)
+    present = {int(round(point.co[0])) for point in points}
+
+    sampled = [(frame, fcurve.evaluate(frame)) for frame in sorted(wanted - present)]
+
+    for frame, value in sampled:
+        points.insert(frame, value, options={"FAST"})
+
+    if sampled:
+        fcurve.update()
+
+    for index in range(len(points) - 1, -1, -1):
+        if int(round(points[index].co[0])) not in wanted:
+            points.remove(points[index], fast=True)
+
+    set_interpolation(points, interpolation)
+    fcurve.update()
+
+    return before, len(points), len(sampled)
 
 
 # ----------------------------------------------------------------------
@@ -607,4 +791,52 @@ def decimate(armature, tolerance_location=0.001, tolerance_rotation=0.5,
         "after": after,
         "removed": removed,
         "ratio": ratio,
+    }
+
+
+def delete_non_extreme(armature, channels="ALL", selected_only=False,
+                       interpolation="BEZIER"):
+    """Thin the action down to the frames marked Extreme. Returns a summary dict.
+
+    This pass has no tolerance and no strength, because it is not deciding
+    anything -- the frame set is whatever the animator marked. Refusing when
+    nothing is marked is the important guard: an empty frame set would take
+    the whole action with it.
+    """
+    frames = extreme_frames(armature)
+
+    if not frames:
+        raise CleanupError(
+            "No keyframes are marked Extreme, so there is nothing to keep. "
+            "Select the poses you want in the Dope Sheet, set Key > Keyframe "
+            "Type > Extreme (R), then run this again"
+        )
+
+    curves = collect_curves(armature, channels=channels, selected_only=selected_only)
+
+    before = 0
+    after = 0
+    inserted = 0
+
+    for fcurve in curves:
+        curve_before, curve_after, curve_inserted = snap_curve_to_frames(
+            fcurve, frames, interpolation=interpolation
+        )
+        before += curve_before
+        after += curve_after
+        inserted += curve_inserted
+
+    total = before + inserted
+    removed = total - after
+
+    return {
+        "channels": len(curves),
+        "frames": len(frames),
+        "first": frames[0],
+        "last": frames[-1],
+        "before": before,
+        "after": after,
+        "inserted": inserted,
+        "removed": removed,
+        "ratio": (removed / float(total)) if total else 0.0,
     }

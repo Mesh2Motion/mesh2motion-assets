@@ -107,6 +107,19 @@ CHANNEL_ITEMS = [
     ("LOCATION", "Location", "Position channels only"),
 ]
 
+# Shared by all three passes that remove keys. Sparse keys left on LINEAR read
+# as a series of straight segments, which looks worse than what was removed.
+INTERPOLATION_ITEMS = [
+    (
+        "BEZIER",
+        "Bezier",
+        "Auto-clamped Bezier. Sparse keys read as motion rather than "
+        "as a series of straight segments",
+    ),
+    ("LINEAR", "Linear", "Straight lines between keys"),
+    ("KEEP", "Keep", "Leave the existing interpolation alone"),
+]
+
 
 # ----------------------------------------------------------------------
 # Helpers
@@ -862,16 +875,7 @@ class M2M_OT_decimate_keyframes(CleanupOperatorBase, Operator):
     interpolation: EnumProperty(
         name="Interpolation",
         description="What to set the surviving keyframes to",
-        items=[
-            (
-                "BEZIER",
-                "Bezier",
-                "Auto-clamped Bezier. Sparse keys read as motion rather than "
-                "as a series of straight segments",
-            ),
-            ("LINEAR", "Linear", "Straight lines between keys"),
-            ("KEEP", "Keep", "Leave the existing interpolation alone"),
-        ],
+        items=INTERPOLATION_ITEMS,
         default="BEZIER",
     )
 
@@ -941,16 +945,7 @@ class M2M_OT_simplify_poles(Operator):
     interpolation: EnumProperty(
         name="Interpolation",
         description="What to set the surviving keyframes to",
-        items=[
-            (
-                "BEZIER",
-                "Bezier",
-                "Auto-clamped Bezier. Sparse keys read as motion rather than "
-                "as a series of straight segments",
-            ),
-            ("LINEAR", "Linear", "Straight lines between keys"),
-            ("KEEP", "Keep", "Leave the existing interpolation alone"),
-        ],
+        items=INTERPOLATION_ITEMS,
         default="BEZIER",
     )
 
@@ -1000,6 +995,66 @@ class M2M_OT_simplify_poles(Operator):
         return {"FINISHED"}
 
 
+class M2M_OT_delete_non_extreme(CleanupOperatorBase, Operator):
+    """Delete every keyframe that is not on a frame marked Extreme. Mark the
+    poses worth keeping first -- in the Dope Sheet, select them and use
+    Key > Keyframe Type > Extreme (R). A channel with no key on an extreme
+    frame is sampled there, so the whole rig lands on the same frames"""
+
+    bl_idname = "m2m.delete_non_extreme"
+    bl_label = "Delete Non-Extreme Keyframes"
+
+    interpolation: EnumProperty(
+        name="Interpolation",
+        description="What to set the surviving keyframes to",
+        items=INTERPOLATION_ITEMS,
+        default="BEZIER",
+    )
+
+    # poll() is inherited: an armature holding an action, and no more than
+    # that. Checking that something is actually marked Extreme would mean
+    # walking every key in the action on every panel redraw, which is what
+    # got the old bone-map readout removed. The operator reports it instead.
+
+    def execute(self, context):
+        ensure_object_mode()
+
+        try:
+            result = cleanup.delete_non_extreme(
+                context.object,
+                channels=self.channels,
+                selected_only=self.selected_only,
+                interpolation=self.interpolation,
+            )
+        except cleanup.CleanupError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        except Exception as exc:
+            traceback.print_exc()
+            self.report(
+                {"ERROR"},
+                "Extreme cleanup failed: {} (see system console)".format(exc),
+            )
+            return {"CANCELLED"}
+
+        message = (
+            "{} -> {} keyframes across {} channels, on {} extreme frames "
+            "({}-{})".format(
+                result["before"],
+                result["after"],
+                result["channels"],
+                result["frames"],
+                result["first"],
+                result["last"],
+            )
+        )
+        if result["inserted"]:
+            message += " | {} sampled in".format(result["inserted"])
+
+        self.report({"INFO"}, message)
+        return {"FINISHED"}
+
+
 # ----------------------------------------------------------------------
 # Panel
 # ----------------------------------------------------------------------
@@ -1028,6 +1083,11 @@ class M2M_PT_mocopi_panel(Panel):
         column.operator(M2M_OT_simplify_poles.bl_idname, icon="CON_KINEMATIC")
         column.operator(M2M_OT_decimate_keyframes.bl_idname, icon="DECORATE_KEYFRAME")
 
+        layout.separator()
+        layout.operator(
+            M2M_OT_delete_non_extreme.bl_idname, icon="KEYTYPE_EXTREME_VEC"
+        )
+
 
 # ----------------------------------------------------------------------
 # Registration
@@ -1039,6 +1099,7 @@ classes = (
     M2M_OT_smooth_keyframes,
     M2M_OT_simplify_poles,
     M2M_OT_decimate_keyframes,
+    M2M_OT_delete_non_extreme,
     M2M_PT_mocopi_panel,
 )
 
