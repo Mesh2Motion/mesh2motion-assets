@@ -11,12 +11,13 @@ workflow into a single button:
      and bake the result.
   5. Optionally smooth the baked curves, to take the sensor jitter out of
      the capture without changing its timing.
-  6. Optionally lift the horizontal travel out of the hips and onto DRV_root,
-     so the export skeleton's root bone carries it.
+  6. Lift the horizontal travel out of the hips and onto DRV_root, so the
+     export skeleton's root bone carries it. Off by default -- it is not
+     additive, so it is left to a deliberate choice.
   7. Optionally simplify the four IK pole targets, which are hints rather than
      animation and do not need a key on every frame.
-  8. Optionally decimate the result, dropping every keyframe the curves can
-     do without inside a stated error bound.
+  8. Decimate the result, dropping every keyframe the curves can do without
+     inside a stated error bound. One round runs on import by default.
 
 Step 4 uses a retargeting engine ported from the Rokoko Studio Live addon --
 see retarget_engine.py for the attribution and for what changed.
@@ -84,13 +85,13 @@ DECIMATE_LOCATION_DESCRIPTION = (
 POLE_SMOOTH_DESCRIPTION = (
     "Width of the blur applied to the pole targets, in frames. A pole only "
     "has to point the elbow or knee roughly the right way, so it takes far "
-    "more blur than a real bone: 4 flattens the per-step wobble out of it"
+    "more blur than a real bone: 6 flattens the per-step wobble out of it"
 )
 
 POLE_TOLERANCE_DESCRIPTION = (
     "How far a pole target may end up from where it was, in metres, for a "
     "keyframe to be worth dropping. The poles sit half a metre out from the "
-    "limb, so a few millimetres there is nothing"
+    "limb, so a centimetre there is nothing"
 )
 
 POLE_SIMPLIFY_DESCRIPTION = (
@@ -302,7 +303,7 @@ class M2M_OT_load_mocopi_bvh(Operator, ImportHelper):
             "Move the horizontal travel out of the hips and onto DRV_root, so the "
             "export skeleton's root bone carries it. The visible pose is unchanged"
         ),
-        default=True,
+        default=False,
     )
 
     root_smoothing: FloatProperty(
@@ -343,7 +344,7 @@ class M2M_OT_load_mocopi_bvh(Operator, ImportHelper):
     pole_smoothing: FloatProperty(
         name="Pole Smoothing",
         description=POLE_SMOOTH_DESCRIPTION,
-        default=4.0,
+        default=6.0,
         min=0.0,
         soft_max=16.0,
     )
@@ -351,7 +352,7 @@ class M2M_OT_load_mocopi_bvh(Operator, ImportHelper):
     pole_tolerance: FloatProperty(
         name="Pole Tolerance",
         description=POLE_TOLERANCE_DESCRIPTION,
-        default=0.004,
+        default=0.01,
         min=0.0,
         soft_max=0.05,
         step=0.01,
@@ -365,7 +366,7 @@ class M2M_OT_load_mocopi_bvh(Operator, ImportHelper):
             "Drop every keyframe the curves can do without. Runs last, after "
             "root motion, since that writes a key on every frame by design"
         ),
-        default=False,
+        default=True,
     )
 
     decimate_rotation: FloatProperty(
@@ -921,7 +922,7 @@ class M2M_OT_simplify_poles(Operator):
     amount: FloatProperty(
         name="Pole Smoothing",
         description=POLE_SMOOTH_DESCRIPTION,
-        default=4.0,
+        default=6.0,
         min=0.0,
         soft_max=16.0,
     )
@@ -929,7 +930,7 @@ class M2M_OT_simplify_poles(Operator):
     tolerance: FloatProperty(
         name="Pole Tolerance",
         description=POLE_TOLERANCE_DESCRIPTION,
-        default=0.004,
+        default=0.01,
         min=0.0,
         soft_max=0.05,
         step=0.01,

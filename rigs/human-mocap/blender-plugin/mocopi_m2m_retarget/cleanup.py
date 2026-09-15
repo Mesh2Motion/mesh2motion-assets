@@ -525,7 +525,7 @@ def smooth(armature, sigma_frames=1.0, channels="ALL", selected_only=False):
     return {"channels": changed, "sigma": sigma_frames}
 
 
-def simplify_poles(armature, sigma_frames=4.0, tolerance=0.004,
+def simplify_poles(armature, sigma_frames=6.0, tolerance=0.01,
                    interpolation="BEZIER", bones=POLE_BONES):
     """Thin the IK pole targets hard. Returns a summary dict.
 
@@ -538,7 +538,7 @@ def simplify_poles(armature, sigma_frames=4.0, tolerance=0.004,
       the rotation curves are carrying nothing.
     * **Position is blurred and decimated at a loose bound.** The pole sits
       half a metre out from the limb and only has to point the elbow or knee
-      the right way, so a few millimetres of error is invisible where the same
+      the right way, so a centimetre of error is invisible where the same
       number on a foot control would not be.
 
     Run it after root motion, which re-keys every frame of every control that
