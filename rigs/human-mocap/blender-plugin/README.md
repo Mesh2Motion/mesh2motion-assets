@@ -5,9 +5,8 @@ rig append, prep scripts, retarget and bake.
 
 ## Install
 
-1. `python build.py` — copies the current `../scripts/*.py` and the reference
-   `.blend` into the addon package and writes
-   `dist/mocopi_m2m_retarget-0.1.2.zip`.
+1. `python build.py` — copies the current `../scripts/*.py` into the addon
+   package and writes `dist/mocopi_m2m_retarget-0.1.3.zip`.
 2. In Blender 4.2+, drag the zip into the window, or
    **Edit > Preferences > Add-ons > Install from Disk**.
 3. Enable **Mocopi to Mesh2Motion**.
@@ -90,8 +89,9 @@ blender-plugin/
     ├── __init__.py               # operators + panel
     ├── retarget_engine.py        # ported Rokoko retargeter
     ├── bone_map.py               # bone map loading + validation
-    ├── assets/
-    │   ├── human-mocopi-rig-setup.blend        # copied by build.py
+    ├── assets/                   # addon-owned, never overwritten
+    │   ├── human-mocopi-rig-setup.blend        # edit this one in Blender
+    │   ├── color-palette.png                   # texture, sits beside the .blend
     │   ├── mocopi-to-m2m-bone-map.json         # the map the addon uses
     │   └── mocopi-to-m2m-rokoko-mapping.json   # old Rokoko scheme, reference only
     └── scripts/
@@ -100,11 +100,43 @@ blender-plugin/
         └── add-ik-bones.py       # copied by build.py
 ```
 
-`../scripts/` stays the source of truth for `expand-arms.py` and
-`add-ik-bones.py` — edit them there and re-run `build.py`. The bundled
-`retarget-master.py` is maintained in the addon because it resolves its
-sibling scripts from `__file__`; it still falls back to a `scripts` folder
-next to the open `.blend` when run straight from the text editor.
+## Who owns what
+
+This matters, because getting it wrong silently destroys work — it already did
+once, when a build copied an older `.blend` over a texture fix saved into the
+addon.
+
+| Files | Owner | How to edit |
+|---|---|---|
+| `../scripts/expand-arms.py`, `add-ik-bones.py` | **human-mocap** | Edit there, re-run `build.py` |
+| `mocopi_m2m_retarget/scripts/retarget-master.py` | **the addon** | Edit in place — it resolves siblings from `__file__` |
+| `mocopi_m2m_retarget/assets/*` — the `.blend`, the bone map, textures | **the addon** | Edit in place. Open `assets/human-mocopi-rig-setup.blend` in Blender and save it there |
+| everything else in `mocopi_m2m_retarget/` | **the addon** | Edit in place |
+
+The `.blend` lives in the addon because its texture paths resolve relative to
+wherever the file actually sits. Editing it anywhere else and copying it in
+breaks them again.
+
+Anything dropped into `assets/` is zipped as-is — no list to update. `build.py`
+prints `copied` / `kept` / `bundled` per file so it's clear which rule applied.
+
+### The overwrite guard
+
+`build.py` refuses to copy over a destination newer than its source:
+
+```
+BUILD FAILED
+
+Refusing to overwrite newer file:
+    ...\mocopi_m2m_retarget\scripts\add-ik-bones.py
+  is newer than its source
+    ...\human-mocap\scripts\add-ik-bones.py
+```
+
+That means you edited the addon's copy of a file that human-mocap owns. Move
+the change back to the source, or delete the newer copy, then build again. It
+also fails if an addon-owned asset has gone missing, rather than shipping a
+zip without it.
 
 ## Retargeting engine
 
