@@ -27,12 +27,19 @@ import os
 import traceback
 
 import bpy
-from bpy.props import BoolProperty, EnumProperty, FloatProperty, StringProperty
+from bpy.props import (
+    BoolProperty,
+    EnumProperty,
+    FloatProperty,
+    FloatVectorProperty,
+    StringProperty,
+)
 from bpy.types import Operator, Panel
 from bpy_extras.io_utils import ImportHelper
 
 from . import bone_map as bone_map_loader
 from . import cleanup
+from . import offset as offset_tool
 from . import retarget_engine
 from . import root_motion
 
@@ -99,6 +106,19 @@ POLE_SIMPLIFY_DESCRIPTION = (
     "keyframe -- Blender's IK reads a pole's position and the pole angle, "
     "never its orientation -- and their position is blurred and decimated at "
     "a much looser bound than the rest of the rig. Runs after root motion"
+)
+
+# The offset lives on the scene rather than only on the operator, so the X/Y/Z
+# fields can be drawn in the sidebar above the button. A panel operator runs on
+# its defaults with no dialog (see the Panel section of the design notes), and
+# the default offset is necessarily zero -- so without somewhere to type first,
+# the button could only ever report that there was nothing to move.
+OFFSET_PROPERTY = "m2m_offset"
+
+OFFSET_DESCRIPTION = (
+    "How far to move the character, in world space, applied to every frame. "
+    "Blender's axes: +X/-X is right/left, +Y/-Y is forward/back, +Z/-Z is "
+    "up/down"
 )
 
 CHANNEL_ITEMS = [
@@ -756,6 +776,64 @@ class M2M_OT_extract_root_motion(Operator):
         return {"FINISHED"}
 
 
+class M2M_OT_offset_character(Operator):
+    """Shift the whole character in space without changing the performance.
+    Moves every control on the rig by the offset above, on every frame.
+    Additive, and exactly reversible by entering the negative"""
+
+    bl_idname = "m2m.offset_character"
+    bl_label = "Offset Character Position"
+    bl_options = {"REGISTER", "UNDO"}
+
+    offset: FloatVectorProperty(
+        name="Offset",
+        description=OFFSET_DESCRIPTION,
+        size=3,
+        default=(0.0, 0.0, 0.0),
+        subtype="TRANSLATION",
+        unit="LENGTH",
+    )
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return (
+            obj is not None
+            and obj.type == "ARMATURE"
+            and root_motion.ROOT_BONE in obj.pose.bones
+        )
+
+    def execute(self, context):
+        ensure_object_mode()
+
+        try:
+            result = offset_tool.apply(
+                context.object,
+                offset=self.offset,
+            )
+        except offset_tool.OffsetError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        except Exception as exc:
+            traceback.print_exc()
+            self.report(
+                {"ERROR"}, "Offset failed: {} (see system console)".format(exc)
+            )
+            return {"CANCELLED"}
+
+        delta = result["delta"]
+        message = "Moved {} controls by ({:.3f}, {:.3f}, {:.3f})m".format(
+            result["bones"], delta[0], delta[1], delta[2]
+        )
+        if result["created"]:
+            message += " | keyed {} control(s) that had no position curve: {}".format(
+                len(result["created"]), ", ".join(result["created"])
+            )
+
+        self.report({"INFO"}, message)
+        return {"FINISHED"}
+
+
 class CleanupOperatorBase:
     """Shared plumbing for the two keyframe cleanup operators."""
 
@@ -1073,7 +1151,23 @@ class M2M_PT_mocopi_panel(Panel):
         column.operator(M2M_OT_load_mocopi_bvh.bl_idname, icon="ARMATURE_DATA")
 
         layout.separator()
+        layout.label(text="Placement")
         layout.operator(M2M_OT_extract_root_motion.bl_idname, icon="ORIENTATION_PARENT")
+
+        box = layout.box()
+        box.label(text="Offset Character")
+
+        column = box.column(align=True)
+        column.prop(context.scene, OFFSET_PROPERTY, text="")
+
+        operator = box.operator(
+            M2M_OT_offset_character.bl_idname,
+            text="Apply Offset",
+            icon="CON_LOCLIKE",
+        )
+        # Hand the panel's values to the operator. Without this the button
+        # would run on the operator's own defaults, which are zero.
+        operator.offset = getattr(context.scene, OFFSET_PROPERTY)
 
         layout.separator()
         layout.label(text="Cleanup")
@@ -1096,6 +1190,7 @@ class M2M_PT_mocopi_panel(Panel):
 classes = (
     M2M_OT_load_mocopi_bvh,
     M2M_OT_extract_root_motion,
+    M2M_OT_offset_character,
     M2M_OT_smooth_keyframes,
     M2M_OT_simplify_poles,
     M2M_OT_decimate_keyframes,
@@ -1108,7 +1203,23 @@ def register():
     for cls in classes:
         bpy.utils.register_class(cls)
 
+    setattr(
+        bpy.types.Scene,
+        OFFSET_PROPERTY,
+        FloatVectorProperty(
+            name="Offset",
+            description=OFFSET_DESCRIPTION,
+            size=3,
+            default=(0.0, 0.0, 0.0),
+            subtype="TRANSLATION",
+            unit="LENGTH",
+        ),
+    )
+
 
 def unregister():
+    if hasattr(bpy.types.Scene, OFFSET_PROPERTY):
+        delattr(bpy.types.Scene, OFFSET_PROPERTY)
+
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
