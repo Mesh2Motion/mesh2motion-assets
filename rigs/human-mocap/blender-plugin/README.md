@@ -65,8 +65,8 @@ COPY_LOCATION constraint as well as COPY_ROTATION:
 
 Bone lookup is case-insensitive. Anything in the map that does not exist on
 either armature is reported as a warning and skipped rather than failing the
-whole bake. **Open Bone Map** in the panel loads the JSON into Blender's text
-editor; edits take effect on the next run.
+whole bake. The map is read from `assets/mocopi-to-m2m-bone-map.json` at import
+time; edit it in the repo and rebuild.
 
 ### If the spine drifts
 

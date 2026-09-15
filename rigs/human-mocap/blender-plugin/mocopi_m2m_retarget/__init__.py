@@ -409,33 +409,6 @@ class M2M_OT_load_mocopi_bvh(Operator, ImportHelper):
         return {"FINISHED"}
 
 
-class M2M_OT_open_bone_map(Operator):
-    """Load the bone map into a text block so it can be checked or edited"""
-
-    bl_idname = "m2m.open_bone_map"
-    bl_label = "Open Bone Map"
-    bl_options = {"REGISTER"}
-
-    def execute(self, context):
-        if not os.path.isfile(BONE_MAP_JSON):
-            self.report({"ERROR"}, "Bone map not found at {}".format(BONE_MAP_JSON))
-            return {"CANCELLED"}
-
-        name = os.path.basename(BONE_MAP_JSON)
-        existing = bpy.data.texts.get(name)
-        if existing:
-            bpy.data.texts.remove(existing)
-
-        text = bpy.data.texts.load(BONE_MAP_JSON)
-        text.name = name
-
-        self.report(
-            {"INFO"},
-            "Loaded {} into the text editor. Save it there to apply changes.".format(name),
-        )
-        return {"FINISHED"}
-
-
 # ----------------------------------------------------------------------
 # Panel
 # ----------------------------------------------------------------------
@@ -444,7 +417,7 @@ class M2M_PT_mocopi_panel(Panel):
     bl_label = "Mocopi Retarget"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
-    bl_category = "Mocopi"
+    bl_category = "Mesh2Motion"
 
     def draw(self, context):
         layout = self.layout
@@ -453,20 +426,6 @@ class M2M_PT_mocopi_panel(Panel):
         column.scale_y = 1.5
         column.operator(M2M_OT_load_mocopi_bvh.bl_idname, icon="ARMATURE_DATA")
 
-        layout.separator()
-
-        try:
-            pairs, _options = bone_map_loader.load(BONE_MAP_JSON)
-        except bone_map_loader.BoneMapError as exc:
-            box = layout.box()
-            box.alert = True
-            box.label(text="Bone map problem:", icon="ERROR")
-            box.label(text=str(exc))
-        else:
-            layout.label(text="Bone map: {} pairs".format(len(pairs)))
-
-        layout.operator(M2M_OT_open_bone_map.bl_idname, icon="TEXT")
-
 
 # ----------------------------------------------------------------------
 # Registration
@@ -474,7 +433,6 @@ class M2M_PT_mocopi_panel(Panel):
 
 classes = (
     M2M_OT_load_mocopi_bvh,
-    M2M_OT_open_bone_map,
     M2M_PT_mocopi_panel,
 )
 
