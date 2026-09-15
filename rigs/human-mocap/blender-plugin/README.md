@@ -6,12 +6,12 @@ rig append, prep scripts, retarget and bake.
 ## Install
 
 1. `python build.py` — copies the current `../scripts/*.py` into the addon
-   package and writes `dist/mocopi_m2m_retarget-0.1.3.zip`.
+   package and writes `dist/mocopi_m2m_retarget-0.2.0.zip`.
 2. In Blender 4.2+, drag the zip into the window, or
    **Edit > Preferences > Add-ons > Install from Disk**.
 3. Enable **Mocopi to Mesh2Motion**.
 
-The panel appears in the 3D viewport sidebar (`N`) under the **Mocopi** tab.
+The panel appears in the 3D viewport sidebar (`N`) under the **Mesh2Motion** tab.
 The Rokoko addon is no longer needed.
 
 ## What the button does
@@ -32,9 +32,52 @@ The Rokoko addon is no longer needed.
    collection, using `assets/mocopi-to-m2m-bone-map.json`, and bakes the
    result to an action named `<capture> Retarget`. The BVH skeleton is
    hidden, not deleted, unless you untick **Keep BVH Skeleton**.
+5. Extracts root motion: the horizontal travel moves out of the hips and onto
+   `DRV_root`, which the export skeleton's `root` bone copies. See below.
 
 Every step has a checkbox in the file browser sidebar, so you can stop after
 the import, or after the prep, and drive the rest by hand.
+
+## Root motion
+
+The rig already has a real root bone — the export skeleton's `root` has a
+Copy Transforms constraint (World/World) from `DRV_root` — but `DRV_root`
+normally carries no animation, which is why all the travel ends up baked into
+`pelvis`. **Extract Root Motion** moves it where it belongs, without changing
+a single frame of the visible pose:
+
+1. Sample the world path of `CTRL_Hips` over the scene frame range.
+2. Smooth its XY and zero it at the first frame, so per-step sway stays in the
+   hips and the clip still starts where it started.
+3. Record the pose-space matrix of every direct child of `DRV_root` on every
+   frame — the hips, the four IK controls and the four poles.
+4. Key `DRV_root` with the path.
+5. Write those matrices back. Blender re-solves each against the now-moving
+   parent, so the world result is identical and the motion has simply been
+   redistributed.
+
+Step 3/5 is the part that is easy to get wrong. Every control on this rig is a
+child of `DRV_root`, and after the retarget bake they all hold plain local
+keyframes — animating the root without compensating travels the character
+twice and slides the planted feet out from under it.
+
+The export skeleton needs no compensation at all. Its constraints are
+World/World, so `pelvis` stays pinned to `DRV_hips` whatever `root` does. On
+export — glTF and FBX both sample the constrained pose — `root` carries the
+travel and `pelvis` bakes down to the residual bob and sway relative to it.
+
+Only XY moves onto the root. Vertical bob, lean and all rotation stay in the
+hips, so the root never leaves the ground plane. **Smoothing** is a 0..1
+slider: 0 follows the capture exactly, 1 is half a second of Gaussian blur.
+0.5 removes essentially all of a walk's side-to-side sway. Travel is preserved
+exactly at any setting — the filter extrapolates past the ends of the clip
+rather than clamping, which would otherwise flatten the path at the start and
+finish and cost real distance.
+
+The panel button runs the same thing on an already-baked take, so you can
+re-run it at a different smoothing without re-importing. It is not additive:
+running it twice stacks a second path onto the first, so undo before
+retrying.
 
 ## The bone map
 
@@ -88,6 +131,7 @@ blender-plugin/
     ├── NOTICE.md                 # Rokoko attribution
     ├── __init__.py               # operators + panel
     ├── retarget_engine.py        # ported Rokoko retargeter
+    ├── root_motion.py            # hips travel -> DRV_root
     ├── bone_map.py               # bone map loading + validation
     ├── assets/                   # addon-owned, never overwritten
     │   ├── human-mocopi-rig-setup.blend        # edit this one in Blender

@@ -9,6 +9,8 @@ workflow into a single button:
      which expands the arms and builds the elbow / knee pole bones.
   4. Retarget the capture onto the Mesh2Motion rig using an explicit bone map
      and bake the result.
+  5. Optionally lift the horizontal travel out of the hips and onto DRV_root,
+     so the export skeleton's root bone carries it.
 
 Step 4 uses a retargeting engine ported from the Rokoko Studio Live addon --
 see retarget_engine.py for the attribution and for what changed.
@@ -24,6 +26,7 @@ from bpy_extras.io_utils import ImportHelper
 
 from . import bone_map as bone_map_loader
 from . import retarget_engine
+from . import root_motion
 
 
 # ----------------------------------------------------------------------
@@ -235,6 +238,27 @@ class M2M_OT_load_mocopi_bvh(Operator, ImportHelper):
         default=True,
     )
 
+    extract_root_motion: BoolProperty(
+        name="Extract Root Motion",
+        description=(
+            "Move the horizontal travel out of the hips and onto DRV_root, so the "
+            "export skeleton's root bone carries it. The visible pose is unchanged"
+        ),
+        default=True,
+    )
+
+    root_smoothing: FloatProperty(
+        name="Root Smoothing",
+        description=(
+            "How much of the hips' side-to-side sway to keep out of the root path. "
+            "0 follows the capture exactly; 1 is half a second of blur"
+        ),
+        default=0.5,
+        min=0.0,
+        max=1.0,
+        subtype="FACTOR",
+    )
+
     def draw(self, context):
         layout = self.layout
         layout.use_property_split = True
@@ -259,6 +283,11 @@ class M2M_OT_load_mocopi_bvh(Operator, ImportHelper):
         column.prop(self, "auto_scale")
         column.prop(self, "use_pose", expand=True)
         column.prop(self, "keep_source")
+        column.prop(self, "extract_root_motion")
+
+        row = column.row()
+        row.enabled = self.extract_root_motion
+        row.prop(self, "root_smoothing")
 
     def execute(self, context):
         filepath = self.filepath
@@ -397,6 +426,28 @@ class M2M_OT_load_mocopi_bvh(Operator, ImportHelper):
                     "Not on the rig: {}".format(", ".join(result["missing_target"])),
                 )
 
+            if self.extract_root_motion:
+                try:
+                    root_result = root_motion.extract(
+                        target, smoothing=self.root_smoothing
+                    )
+                except root_motion.RootMotionError as exc:
+                    # The retarget itself worked, so this is a warning and not
+                    # a reason to throw the whole import away.
+                    self.report({"WARNING"}, "Root motion skipped: {}".format(exc))
+                except Exception as exc:
+                    traceback.print_exc()
+                    self.report(
+                        {"WARNING"},
+                        "Root motion failed: {} (see system console)".format(exc),
+                    )
+                else:
+                    summary.append(
+                        "root motion {:.2f}m onto {}".format(
+                            root_result["travel"], root_motion.ROOT_BONE
+                        )
+                    )
+
             if not self.keep_source:
                 bpy.data.objects.remove(armature, do_unlink=True)
                 summary.append("removed the BVH skeleton")
@@ -406,6 +457,72 @@ class M2M_OT_load_mocopi_bvh(Operator, ImportHelper):
             select_only(target)
 
         self.report({"INFO"}, " | ".join(summary))
+        return {"FINISHED"}
+
+
+class M2M_OT_extract_root_motion(Operator):
+    """Move the horizontal travel out of the hips and onto DRV_root on the
+    active rig. The visible pose does not change"""
+
+    bl_idname = "m2m.extract_root_motion"
+    bl_label = "Extract Root Motion"
+    bl_options = {"REGISTER", "UNDO"}
+
+    smoothing: FloatProperty(
+        name="Smoothing",
+        description=(
+            "How much of the hips' side-to-side sway to keep out of the root path. "
+            "0 follows the capture exactly; 1 is half a second of blur"
+        ),
+        default=0.5,
+        min=0.0,
+        max=1.0,
+        subtype="FACTOR",
+    )
+
+    zero_start: BoolProperty(
+        name="Start At Origin",
+        description="Offset the path so the root begins at the world origin",
+        default=True,
+    )
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return (
+            obj is not None
+            and obj.type == "ARMATURE"
+            and root_motion.ROOT_BONE in obj.pose.bones
+        )
+
+    def execute(self, context):
+        ensure_object_mode()
+
+        try:
+            result = root_motion.extract(
+                context.object,
+                smoothing=self.smoothing,
+                zero_start=self.zero_start,
+            )
+        except root_motion.RootMotionError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        except Exception as exc:
+            traceback.print_exc()
+            self.report(
+                {"ERROR"}, "Root motion failed: {} (see system console)".format(exc)
+            )
+            return {"CANCELLED"}
+
+        self.report(
+            {"INFO"},
+            "Moved {:.2f}m onto {} over {} frames ({} controls compensated)".format(
+                result["travel"],
+                root_motion.ROOT_BONE,
+                result["frames"],
+                result["children"],
+            ),
+        )
         return {"FINISHED"}
 
 
@@ -426,6 +543,9 @@ class M2M_PT_mocopi_panel(Panel):
         column.scale_y = 1.5
         column.operator(M2M_OT_load_mocopi_bvh.bl_idname, icon="ARMATURE_DATA")
 
+        layout.separator()
+        layout.operator(M2M_OT_extract_root_motion.bl_idname, icon="ORIENTATION_PARENT")
+
 
 # ----------------------------------------------------------------------
 # Registration
@@ -433,6 +553,7 @@ class M2M_PT_mocopi_panel(Panel):
 
 classes = (
     M2M_OT_load_mocopi_bvh,
+    M2M_OT_extract_root_motion,
     M2M_PT_mocopi_panel,
 )
 
