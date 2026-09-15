@@ -9,8 +9,12 @@ workflow into a single button:
      which expands the arms and builds the elbow / knee pole bones.
   4. Retarget the capture onto the Mesh2Motion rig using an explicit bone map
      and bake the result.
-  5. Optionally lift the horizontal travel out of the hips and onto DRV_root,
+  5. Optionally smooth the baked curves, to take the sensor jitter out of
+     the capture without changing its timing.
+  6. Optionally lift the horizontal travel out of the hips and onto DRV_root,
      so the export skeleton's root bone carries it.
+  7. Optionally decimate the result, dropping every keyframe the curves can
+     do without inside a stated error bound.
 
 Step 4 uses a retargeting engine ported from the Rokoko Studio Live addon --
 see retarget_engine.py for the attribution and for what changed.
@@ -25,6 +29,7 @@ from bpy.types import Operator, Panel
 from bpy_extras.io_utils import ImportHelper
 
 from . import bone_map as bone_map_loader
+from . import cleanup
 from . import retarget_engine
 from . import root_motion
 
@@ -47,6 +52,38 @@ REFERENCE_COLLECTIONS = ("Rig", "Custom Bone Shapes")
 
 # The collection holding the Mesh2Motion armature.
 TARGET_COLLECTION = "Rig"
+
+
+# ----------------------------------------------------------------------
+# Cleanup wording
+#
+# The smoothing and decimation settings appear in three places -- the import
+# operator and the two panel operators -- and a tooltip that disagrees with
+# itself is worse than no tooltip.
+# ----------------------------------------------------------------------
+
+SMOOTH_AMOUNT_DESCRIPTION = (
+    "Width of the blur, in frames. Roughly half of it is the shortest motion "
+    "that survives, so 1 removes sensor noise, 3 softens footplants and 6 "
+    "turns a capture into a float"
+)
+
+DECIMATE_ROTATION_DESCRIPTION = (
+    "How far a bone may end up from where it was, in degrees, for a keyframe "
+    "to be worth dropping. Half a degree is invisible and clears most of the "
+    "curve; past about 2 fast limbs start to look stepped"
+)
+
+DECIMATE_LOCATION_DESCRIPTION = (
+    "How far a bone may end up from where it was, in metres, for a keyframe "
+    "to be worth dropping. Applies to the IK controls and the root path"
+)
+
+CHANNEL_ITEMS = [
+    ("ALL", "All", "Position and rotation"),
+    ("ROTATION", "Rotation", "Rotation channels only"),
+    ("LOCATION", "Location", "Position channels only"),
+]
 
 
 # ----------------------------------------------------------------------
@@ -259,6 +296,52 @@ class M2M_OT_load_mocopi_bvh(Operator, ImportHelper):
         subtype="FACTOR",
     )
 
+    smooth_keyframes: BoolProperty(
+        name="Smooth Keyframes",
+        description=(
+            "Blur the baked curves along time to take the sensor jitter out of "
+            "the capture. Runs before root motion is extracted"
+        ),
+        default=True,
+    )
+
+    smooth_amount: FloatProperty(
+        name="Smoothing",
+        description=SMOOTH_AMOUNT_DESCRIPTION,
+        default=1.0,
+        min=0.0,
+        soft_max=8.0,
+    )
+
+    decimate_keyframes: BoolProperty(
+        name="Decimate Keyframes",
+        description=(
+            "Drop every keyframe the curves can do without. Runs last, after "
+            "root motion, since that writes a key on every frame by design"
+        ),
+        default=False,
+    )
+
+    decimate_rotation: FloatProperty(
+        name="Rotation Tolerance",
+        description=DECIMATE_ROTATION_DESCRIPTION,
+        default=0.5,
+        min=0.0,
+        soft_max=5.0,
+        precision=3,
+    )
+
+    decimate_location: FloatProperty(
+        name="Position Tolerance",
+        description=DECIMATE_LOCATION_DESCRIPTION,
+        default=0.001,
+        min=0.0,
+        soft_max=0.05,
+        step=0.01,
+        precision=4,
+        unit="LENGTH",
+    )
+
     def draw(self, context):
         layout = self.layout
         layout.use_property_split = True
@@ -288,6 +371,21 @@ class M2M_OT_load_mocopi_bvh(Operator, ImportHelper):
         row = column.row()
         row.enabled = self.extract_root_motion
         row.prop(self, "root_smoothing")
+
+        box = layout.box()
+        box.label(text="Cleanup", icon="GRAPH")
+        box.enabled = self.do_retarget
+
+        box.prop(self, "smooth_keyframes")
+        row = box.row()
+        row.enabled = self.smooth_keyframes
+        row.prop(self, "smooth_amount")
+
+        box.prop(self, "decimate_keyframes")
+        sub_column = box.column()
+        sub_column.enabled = self.decimate_keyframes
+        sub_column.prop(self, "decimate_rotation")
+        sub_column.prop(self, "decimate_location")
 
     def execute(self, context):
         filepath = self.filepath
@@ -426,6 +524,26 @@ class M2M_OT_load_mocopi_bvh(Operator, ImportHelper):
                     "Not on the rig: {}".format(", ".join(result["missing_target"])),
                 )
 
+            if self.smooth_keyframes and self.smooth_amount > 0.0:
+                try:
+                    smooth_result = cleanup.smooth(
+                        target, sigma_frames=self.smooth_amount
+                    )
+                except cleanup.CleanupError as exc:
+                    # The retarget worked; this is a polish pass, not a reason
+                    # to throw the import away.
+                    self.report({"WARNING"}, "Smoothing skipped: {}".format(exc))
+                except Exception as exc:
+                    traceback.print_exc()
+                    self.report(
+                        {"WARNING"},
+                        "Smoothing failed: {} (see system console)".format(exc),
+                    )
+                else:
+                    summary.append(
+                        "smoothed {} channels".format(smooth_result["channels"])
+                    )
+
             if self.extract_root_motion:
                 try:
                     root_result = root_motion.extract(
@@ -445,6 +563,28 @@ class M2M_OT_load_mocopi_bvh(Operator, ImportHelper):
                     summary.append(
                         "root motion {:.2f}m onto {}".format(
                             root_result["travel"], root_motion.ROOT_BONE
+                        )
+                    )
+
+            if self.decimate_keyframes:
+                try:
+                    decimate_result = cleanup.decimate(
+                        target,
+                        tolerance_location=self.decimate_location,
+                        tolerance_rotation=self.decimate_rotation,
+                    )
+                except cleanup.CleanupError as exc:
+                    self.report({"WARNING"}, "Decimation skipped: {}".format(exc))
+                except Exception as exc:
+                    traceback.print_exc()
+                    self.report(
+                        {"WARNING"},
+                        "Decimation failed: {} (see system console)".format(exc),
+                    )
+                else:
+                    summary.append(
+                        "decimated {} -> {} keys".format(
+                            decimate_result["before"], decimate_result["after"]
                         )
                     )
 
@@ -526,6 +666,173 @@ class M2M_OT_extract_root_motion(Operator):
         return {"FINISHED"}
 
 
+class CleanupOperatorBase:
+    """Shared plumbing for the two keyframe cleanup operators."""
+
+    bl_options = {"REGISTER", "UNDO"}
+
+    channels: EnumProperty(
+        name="Channels",
+        description="Which channels to work on",
+        items=CHANNEL_ITEMS,
+        default="ALL",
+    )
+
+    selected_only: BoolProperty(
+        name="Selected Bones Only",
+        description=(
+            "Only touch the bones selected in pose mode, instead of every "
+            "bone in the action"
+        ),
+        default=False,
+    )
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return (
+            obj is not None
+            and obj.type == "ARMATURE"
+            and obj.animation_data is not None
+            and obj.animation_data.action is not None
+        )
+
+
+class M2M_OT_smooth_keyframes(CleanupOperatorBase, Operator):
+    """Blur the active armature's animation along time, to take the sensor
+    jitter out of a capture. Keyframe count is unchanged"""
+
+    bl_idname = "m2m.smooth_keyframes"
+    bl_label = "Smooth Keyframes"
+
+    amount: FloatProperty(
+        name="Smoothing",
+        description=SMOOTH_AMOUNT_DESCRIPTION,
+        default=1.0,
+        min=0.0,
+        soft_max=8.0,
+    )
+
+    def execute(self, context):
+        ensure_object_mode()
+
+        if self.amount <= 0.0:
+            self.report({"WARNING"}, "Smoothing is 0 -- nothing to do")
+            return {"CANCELLED"}
+
+        try:
+            result = cleanup.smooth(
+                context.object,
+                sigma_frames=self.amount,
+                channels=self.channels,
+                selected_only=self.selected_only,
+            )
+        except cleanup.CleanupError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        except Exception as exc:
+            traceback.print_exc()
+            self.report(
+                {"ERROR"}, "Smoothing failed: {} (see system console)".format(exc)
+            )
+            return {"CANCELLED"}
+
+        self.report(
+            {"INFO"},
+            "Smoothed {} channels at {:.2g} frames".format(
+                result["channels"], result["sigma"]
+            ),
+        )
+        return {"FINISHED"}
+
+
+class M2M_OT_decimate_keyframes(CleanupOperatorBase, Operator):
+    """Drop every keyframe the active armature's curves can do without, within
+    a stated error bound. Run this after smoothing and root motion"""
+
+    bl_idname = "m2m.decimate_keyframes"
+    bl_label = "Decimate Keyframes"
+
+    tolerance_rotation: FloatProperty(
+        name="Rotation Tolerance",
+        description=DECIMATE_ROTATION_DESCRIPTION,
+        default=0.5,
+        min=0.0,
+        soft_max=5.0,
+        precision=3,
+    )
+
+    tolerance_location: FloatProperty(
+        name="Position Tolerance",
+        description=DECIMATE_LOCATION_DESCRIPTION,
+        default=0.001,
+        min=0.0,
+        soft_max=0.05,
+        step=0.01,
+        precision=4,
+        unit="LENGTH",
+    )
+
+    collapse_static: BoolProperty(
+        name="Collapse Static Channels",
+        description=(
+            "Reduce a channel that never moves to a single keyframe instead "
+            "of two"
+        ),
+        default=True,
+    )
+
+    interpolation: EnumProperty(
+        name="Interpolation",
+        description="What to set the surviving keyframes to",
+        items=[
+            (
+                "BEZIER",
+                "Bezier",
+                "Auto-clamped Bezier. Sparse keys read as motion rather than "
+                "as a series of straight segments",
+            ),
+            ("LINEAR", "Linear", "Straight lines between keys"),
+            ("KEEP", "Keep", "Leave the existing interpolation alone"),
+        ],
+        default="BEZIER",
+    )
+
+    def execute(self, context):
+        ensure_object_mode()
+
+        try:
+            result = cleanup.decimate(
+                context.object,
+                tolerance_location=self.tolerance_location,
+                tolerance_rotation=self.tolerance_rotation,
+                channels=self.channels,
+                selected_only=self.selected_only,
+                collapse_static=self.collapse_static,
+                interpolation=self.interpolation,
+            )
+        except cleanup.CleanupError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        except Exception as exc:
+            traceback.print_exc()
+            self.report(
+                {"ERROR"}, "Decimation failed: {} (see system console)".format(exc)
+            )
+            return {"CANCELLED"}
+
+        self.report(
+            {"INFO"},
+            "{} -> {} keyframes across {} channels ({:.0f}% removed)".format(
+                result["before"],
+                result["after"],
+                result["channels"],
+                result["ratio"] * 100.0,
+            ),
+        )
+        return {"FINISHED"}
+
+
 # ----------------------------------------------------------------------
 # Panel
 # ----------------------------------------------------------------------
@@ -546,6 +853,13 @@ class M2M_PT_mocopi_panel(Panel):
         layout.separator()
         layout.operator(M2M_OT_extract_root_motion.bl_idname, icon="ORIENTATION_PARENT")
 
+        layout.separator()
+        layout.label(text="Cleanup")
+
+        column = layout.column(align=True)
+        column.operator(M2M_OT_smooth_keyframes.bl_idname, icon="SMOOTHCURVE")
+        column.operator(M2M_OT_decimate_keyframes.bl_idname, icon="DECORATE_KEYFRAME")
+
 
 # ----------------------------------------------------------------------
 # Registration
@@ -554,6 +868,8 @@ class M2M_PT_mocopi_panel(Panel):
 classes = (
     M2M_OT_load_mocopi_bvh,
     M2M_OT_extract_root_motion,
+    M2M_OT_smooth_keyframes,
+    M2M_OT_decimate_keyframes,
     M2M_PT_mocopi_panel,
 )
 

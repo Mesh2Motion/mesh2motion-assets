@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "mocopi_m2m_retarget"
-version = "0.2.0"
+version = "0.3.0"
 name = "Mocopi to Mesh2Motion"
 tagline = "Import Mocopi BVH and retarget it onto the Mesh2Motion rig"
 maintainer = "Scotty P"

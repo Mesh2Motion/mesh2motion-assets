@@ -6,7 +6,7 @@ rig append, prep scripts, retarget and bake.
 ## Install
 
 1. `python build.py` — copies the current `../scripts/*.py` into the addon
-   package and writes `dist/mocopi_m2m_retarget-0.2.0.zip`.
+   package and writes `dist/mocopi_m2m_retarget-0.3.0.zip`.
 2. In Blender 4.2+, drag the zip into the window, or
    **Edit > Preferences > Add-ons > Install from Disk**.
 3. Enable **Mocopi to Mesh2Motion**.
@@ -32,8 +32,12 @@ The Rokoko addon is no longer needed.
    collection, using `assets/mocopi-to-m2m-bone-map.json`, and bakes the
    result to an action named `<capture> Retarget`. The BVH skeleton is
    hidden, not deleted, unless you untick **Keep BVH Skeleton**.
-5. Extracts root motion: the horizontal travel moves out of the hips and onto
+5. Smooths the baked curves, to take the sensor jitter out of the capture.
+   See below.
+6. Extracts root motion: the horizontal travel moves out of the hips and onto
    `DRV_root`, which the export skeleton's `root` bone copies. See below.
+7. Optionally decimates the result, dropping every keyframe the curves can do
+   without. Off by default.
 
 Every step has a checkbox in the file browser sidebar, so you can stop after
 the import, or after the prep, and drive the rest by hand.
@@ -78,6 +82,79 @@ The panel button runs the same thing on an already-baked take, so you can
 re-run it at a different smoothing without re-importing. It is not additive:
 running it twice stacks a second path onto the first, so undo before
 retrying.
+
+## Smoothing and decimation
+
+Two passes, deliberately separate, on whatever action the active armature is
+holding. Both are panel buttons under **Cleanup** and both are checkboxes on
+the import operator. Order matters: **smooth, then root motion, then
+decimate** — which is the order the import runs them in.
+
+### Smooth Keyframes
+
+Blurs the curve *values* along time with a Gaussian. Key count is unchanged;
+this is the pass that removes shake.
+
+The width is stated in **frames** rather than as a 0..1 factor, because that
+is the number that means something: roughly half of it is the shortest motion
+that survives. At 30fps, measured against a known-clean signal buried in
+uniform noise:
+
+| Smoothing | Result |
+|---|---|
+| 0.5 | 1.3× cleaner — barely worth the pass |
+| **1.0** | 2.2× cleaner — the default. Sensor noise goes, footplants stay |
+| 1.5 | 2.7× cleaner — about as far as it pays |
+| 3.0 | 2.5× — past the turn; it is now removing signal as fast as noise |
+| 6.0 | 0.8× — *worse* than the raw capture. The capture is a float |
+
+Quaternion channels are handled as a unit rather than four independent
+curves, for two reasons. The bake can emit `q` on one frame and `-q` on the
+next — the same rotation, opposite numbers — and a component-wise blur across
+that flip swings the bone through a full turn. And a blurred quaternion is no
+longer unit length, which shows up as a scale on the bone. So the four curves
+are un-flipped, smoothed together, and renormalised per frame.
+
+Like the root motion filter, the kernel extrapolates past the ends of the clip
+rather than clamping, so a bone still turning on the last frame keeps turning
+instead of being dragged flat.
+
+### Decimate Keyframes
+
+Removes *keys* the curve does not need — Ramer-Douglas-Peucker, with the error
+measured **vertically**: a key survives only if dropping it would move the
+curve further than the tolerance at some frame. (The textbook
+perpendicular-distance form mixes frames and radians into one number, which
+means nothing here.)
+
+Tolerances are in real units, so they can be reasoned about:
+
+- **Rotation**, degrees, default **0.5** — no bone ever ends up more than half
+  a degree from where it was. Quaternion channels get half of it, since a
+  component is `sin(angle/2)`.
+- **Position**, metres, default **0.001** — applies to the IK controls and the
+  root path.
+
+How much comes off depends entirely on how fast the bone is moving, which is
+the point. Measured on synthetic 300-frame channels at 0.5°:
+
+| Channel | Keys kept |
+|---|---|
+| Near-still bone | 2% |
+| Drifting head | 4% |
+| Swaying spine | 11% |
+| Thigh through a five-step walk | 34% |
+
+A whole mock capture — hips, head, poles, quaternion and euler and location
+channels together — came down from 2,200 keys to 204, with every surviving
+curve verified to sit within tolerance of the original at every dropped frame.
+
+Surviving keys are set to auto-clamped Bezier by default; sparse keys on
+LINEAR read as a series of straight segments. Channels that never move at all
+collapse to a single key.
+
+Run it **after** root motion, not before — root motion writes a key on every
+frame of every control, by design.
 
 ## The bone map
 
@@ -132,6 +209,7 @@ blender-plugin/
     ├── __init__.py               # operators + panel
     ├── retarget_engine.py        # ported Rokoko retargeter
     ├── root_motion.py            # hips travel -> DRV_root
+    ├── cleanup.py                # keyframe smoothing + decimation
     ├── bone_map.py               # bone map loading + validation
     ├── assets/                   # addon-owned, never overwritten
     │   ├── human-mocopi-rig-setup.blend        # edit this one in Blender
