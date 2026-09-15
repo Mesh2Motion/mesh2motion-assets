@@ -6,7 +6,7 @@ rig append, prep scripts, retarget and bake.
 ## Install
 
 1. `python build.py` — copies the current `../scripts/*.py` into the addon
-   package and writes `dist/mocopi_m2m_retarget-0.3.0.zip`.
+   package and writes `dist/mocopi_m2m_retarget-0.4.0.zip`.
 2. In Blender 4.2+, drag the zip into the window, or
    **Edit > Preferences > Add-ons > Install from Disk**.
 3. Enable **Mocopi to Mesh2Motion**.
@@ -36,8 +36,10 @@ The Rokoko addon is no longer needed.
    See below.
 6. Extracts root motion: the horizontal travel moves out of the hips and onto
    `DRV_root`, which the export skeleton's `root` bone copies. See below.
-7. Optionally decimates the result, dropping every keyframe the curves can do
-   without. Off by default.
+7. Simplifies the four IK pole targets, which are hints rather than animation
+   and do not need a key on every frame. See below.
+8. Optionally decimates the rest of the result, dropping every keyframe the
+   curves can do without. Off by default.
 
 Every step has a checkbox in the file browser sidebar, so you can stop after
 the import, or after the prep, and drive the rest by hand.
@@ -85,10 +87,10 @@ retrying.
 
 ## Smoothing and decimation
 
-Two passes, deliberately separate, on whatever action the active armature is
-holding. Both are panel buttons under **Cleanup** and both are checkboxes on
-the import operator. Order matters: **smooth, then root motion, then
-decimate** — which is the order the import runs them in.
+Three passes, deliberately separate, on whatever action the active armature is
+holding. All three are panel buttons under **Cleanup** and all three are
+checkboxes on the import operator. Order matters: **smooth, then root motion,
+then poles, then decimate** — which is the order the import runs them in.
 
 ### Smooth Keyframes
 
@@ -118,6 +120,35 @@ are un-flipped, smoothed together, and renormalised per frame.
 Like the root motion filter, the kernel extrapolates past the ends of the clip
 rather than clamping, so a bone still turning on the last frame keeps turning
 instead of being dragged flat.
+
+### Simplify Pole Targets
+
+The four pole bones — `POLEARM_L/R`, `POLE_Leg_L/R` — come out of the bake with
+a key on every frame of every channel, the same as any other control. Almost
+none of it is doing anything.
+
+A pole target is a hint, not animation. Blender's IK constraint reads the
+pole's **position** and the pole angle; nothing anywhere reads its
+orientation, and on this rig nothing is parented to a pole either. So:
+
+- **Rotation collapses to a single keyframe.** Not decimated to a tolerance —
+  collapsed, because there is nothing there to preserve.
+- **Position is blurred and decimated at a much looser bound**: 4 frames and
+  4mm by default, against 1 frame and 1mm for the rig proper. The pole sits
+  half a metre out from the limb and only has to point the elbow or knee the
+  right way, so a few millimetres of error there is invisible where the same
+  number on a foot control would not be.
+
+On a mock 300-frame capture the four poles came down from **8,400 keys to
+240** — 97% — with every surviving position curve within 8.5mm of the raw
+capture, most of which is the sensor noise the blur removed on purpose. With
+the blur turned off (smoothing 0) the same pass gets 86%: the noise is what
+was forcing the extra keys.
+
+It runs **after** root motion for the same reason decimation does — root
+motion re-keys every frame of every control hanging off `DRV_root`, poles
+included — and it is on by default, since unlike decimation there is no
+judgement call about what is being thrown away.
 
 ### Decimate Keyframes
 
@@ -209,7 +240,7 @@ blender-plugin/
     ├── __init__.py               # operators + panel
     ├── retarget_engine.py        # ported Rokoko retargeter
     ├── root_motion.py            # hips travel -> DRV_root
-    ├── cleanup.py                # keyframe smoothing + decimation
+    ├── cleanup.py                # keyframe smoothing, poles, decimation
     ├── bone_map.py               # bone map loading + validation
     ├── assets/                   # addon-owned, never overwritten
     │   ├── human-mocopi-rig-setup.blend        # edit this one in Blender

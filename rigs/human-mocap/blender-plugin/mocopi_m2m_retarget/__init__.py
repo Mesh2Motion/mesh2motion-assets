@@ -13,7 +13,9 @@ workflow into a single button:
      the capture without changing its timing.
   6. Optionally lift the horizontal travel out of the hips and onto DRV_root,
      so the export skeleton's root bone carries it.
-  7. Optionally decimate the result, dropping every keyframe the curves can
+  7. Optionally simplify the four IK pole targets, which are hints rather than
+     animation and do not need a key on every frame.
+  8. Optionally decimate the result, dropping every keyframe the curves can
      do without inside a stated error bound.
 
 Step 4 uses a retargeting engine ported from the Rokoko Studio Live addon --
@@ -77,6 +79,25 @@ DECIMATE_ROTATION_DESCRIPTION = (
 DECIMATE_LOCATION_DESCRIPTION = (
     "How far a bone may end up from where it was, in metres, for a keyframe "
     "to be worth dropping. Applies to the IK controls and the root path"
+)
+
+POLE_SMOOTH_DESCRIPTION = (
+    "Width of the blur applied to the pole targets, in frames. A pole only "
+    "has to point the elbow or knee roughly the right way, so it takes far "
+    "more blur than a real bone: 4 flattens the per-step wobble out of it"
+)
+
+POLE_TOLERANCE_DESCRIPTION = (
+    "How far a pole target may end up from where it was, in metres, for a "
+    "keyframe to be worth dropping. The poles sit half a metre out from the "
+    "limb, so a few millimetres there is nothing"
+)
+
+POLE_SIMPLIFY_DESCRIPTION = (
+    "Thin out the four IK pole targets. Their rotation collapses to a single "
+    "keyframe -- Blender's IK reads a pole's position and the pole angle, "
+    "never its orientation -- and their position is blurred and decimated at "
+    "a much looser bound than the rest of the rig. Runs after root motion"
 )
 
 CHANNEL_ITEMS = [
@@ -313,6 +334,31 @@ class M2M_OT_load_mocopi_bvh(Operator, ImportHelper):
         soft_max=8.0,
     )
 
+    simplify_poles: BoolProperty(
+        name="Simplify Pole Targets",
+        description=POLE_SIMPLIFY_DESCRIPTION,
+        default=True,
+    )
+
+    pole_smoothing: FloatProperty(
+        name="Pole Smoothing",
+        description=POLE_SMOOTH_DESCRIPTION,
+        default=4.0,
+        min=0.0,
+        soft_max=16.0,
+    )
+
+    pole_tolerance: FloatProperty(
+        name="Pole Tolerance",
+        description=POLE_TOLERANCE_DESCRIPTION,
+        default=0.004,
+        min=0.0,
+        soft_max=0.05,
+        step=0.01,
+        precision=4,
+        unit="LENGTH",
+    )
+
     decimate_keyframes: BoolProperty(
         name="Decimate Keyframes",
         description=(
@@ -380,6 +426,12 @@ class M2M_OT_load_mocopi_bvh(Operator, ImportHelper):
         row = box.row()
         row.enabled = self.smooth_keyframes
         row.prop(self, "smooth_amount")
+
+        box.prop(self, "simplify_poles")
+        sub_column = box.column()
+        sub_column.enabled = self.simplify_poles
+        sub_column.prop(self, "pole_smoothing")
+        sub_column.prop(self, "pole_tolerance")
 
         box.prop(self, "decimate_keyframes")
         sub_column = box.column()
@@ -563,6 +615,30 @@ class M2M_OT_load_mocopi_bvh(Operator, ImportHelper):
                     summary.append(
                         "root motion {:.2f}m onto {}".format(
                             root_result["travel"], root_motion.ROOT_BONE
+                        )
+                    )
+
+            # After root motion, which writes a key on every frame of every
+            # control hanging off DRV_root -- the four poles included.
+            if self.simplify_poles:
+                try:
+                    pole_result = cleanup.simplify_poles(
+                        target,
+                        sigma_frames=self.pole_smoothing,
+                        tolerance=self.pole_tolerance,
+                    )
+                except cleanup.CleanupError as exc:
+                    self.report({"WARNING"}, "Pole simplify skipped: {}".format(exc))
+                except Exception as exc:
+                    traceback.print_exc()
+                    self.report(
+                        {"WARNING"},
+                        "Pole simplify failed: {} (see system console)".format(exc),
+                    )
+                else:
+                    summary.append(
+                        "poles {} -> {} keys".format(
+                            pole_result["before"], pole_result["after"]
                         )
                     )
 
@@ -833,6 +909,96 @@ class M2M_OT_decimate_keyframes(CleanupOperatorBase, Operator):
         return {"FINISHED"}
 
 
+class M2M_OT_simplify_poles(Operator):
+    """Thin out the four IK pole targets on the active rig. Their rotation
+    collapses to one keyframe and their position is blurred and decimated at a
+    much looser bound than the rest of the rig. Run it after root motion"""
+
+    bl_idname = "m2m.simplify_poles"
+    bl_label = "Simplify Pole Targets"
+    bl_options = {"REGISTER", "UNDO"}
+
+    amount: FloatProperty(
+        name="Pole Smoothing",
+        description=POLE_SMOOTH_DESCRIPTION,
+        default=4.0,
+        min=0.0,
+        soft_max=16.0,
+    )
+
+    tolerance: FloatProperty(
+        name="Pole Tolerance",
+        description=POLE_TOLERANCE_DESCRIPTION,
+        default=0.004,
+        min=0.0,
+        soft_max=0.05,
+        step=0.01,
+        precision=4,
+        unit="LENGTH",
+    )
+
+    interpolation: EnumProperty(
+        name="Interpolation",
+        description="What to set the surviving keyframes to",
+        items=[
+            (
+                "BEZIER",
+                "Bezier",
+                "Auto-clamped Bezier. Sparse keys read as motion rather than "
+                "as a series of straight segments",
+            ),
+            ("LINEAR", "Linear", "Straight lines between keys"),
+            ("KEEP", "Keep", "Leave the existing interpolation alone"),
+        ],
+        default="BEZIER",
+    )
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        if (
+            obj is None
+            or obj.type != "ARMATURE"
+            or obj.animation_data is None
+            or obj.animation_data.action is None
+        ):
+            return False
+
+        names = {name.lower() for name in obj.pose.bones.keys()}
+        return any(pole.lower() in names for pole in cleanup.POLE_BONES)
+
+    def execute(self, context):
+        ensure_object_mode()
+
+        try:
+            result = cleanup.simplify_poles(
+                context.object,
+                sigma_frames=self.amount,
+                tolerance=self.tolerance,
+                interpolation=self.interpolation,
+            )
+        except cleanup.CleanupError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        except Exception as exc:
+            traceback.print_exc()
+            self.report(
+                {"ERROR"}, "Pole simplify failed: {} (see system console)".format(exc)
+            )
+            return {"CANCELLED"}
+
+        self.report(
+            {"INFO"},
+            "{} -> {} keyframes across {} pole channels ({:.0f}% removed)".format(
+                result["before"],
+                result["after"],
+                result["channels"],
+                result["ratio"] * 100.0,
+            ),
+        )
+        return {"FINISHED"}
+
+
 # ----------------------------------------------------------------------
 # Panel
 # ----------------------------------------------------------------------
@@ -858,6 +1024,7 @@ class M2M_PT_mocopi_panel(Panel):
 
         column = layout.column(align=True)
         column.operator(M2M_OT_smooth_keyframes.bl_idname, icon="SMOOTHCURVE")
+        column.operator(M2M_OT_simplify_poles.bl_idname, icon="CON_KINEMATIC")
         column.operator(M2M_OT_decimate_keyframes.bl_idname, icon="DECORATE_KEYFRAME")
 
 
@@ -869,6 +1036,7 @@ classes = (
     M2M_OT_load_mocopi_bvh,
     M2M_OT_extract_root_motion,
     M2M_OT_smooth_keyframes,
+    M2M_OT_simplify_poles,
     M2M_OT_decimate_keyframes,
     M2M_PT_mocopi_panel,
 )

@@ -23,9 +23,18 @@ near-still bone keeps 2% of its keys, a drifting head 4%, a swaying spine
 11%, a thigh swinging through a five-step walk 34%. The busy channels are the
 ones that earn their keys.
 
+**Simplify Pole Targets** is the same two passes at a much looser setting,
+aimed at the four IK pole bones and nothing else. A pole target is a hint,
+not animation: Blender's IK constraint reads its *position* and the pole
+angle, and nothing at all reads its rotation. So the rotation channels
+collapse to a single key, and the position channels are blurred and decimated
+several times harder than a real bone would tolerate. On a dense capture this
+is most of the keys on the rig.
+
 Order matters. Smooth first: smoothing works on key values, so it wants the
-dense curve. Decimate last, after root motion extraction, since root motion
-writes a key on every frame of every control by design.
+dense curve. Then root motion, then the pole pass, then decimate last -- root
+motion writes a key on every frame of every control by design, including the
+poles, so anything that thins them has to come after it.
 
 Both passes ignore the Mesh2Motion export skeleton, which holds no keyframes
 at all -- its bones are driven by Copy Transforms constraints off the DRV rig.
@@ -40,6 +49,12 @@ from .retarget_engine import current_slot, fcurves_for
 
 
 BONE_PATH_PREFIX = 'pose.bones["'
+
+# The four IK pole targets on the Mesh2Motion rig, as add-ik-bones.py and the
+# bone map name them. Matched case-insensitively, but not guessed at: both
+# skeletons are known, which is the same argument that let the retarget engine
+# drop Rokoko's name detection.
+POLE_BONES = ("POLEARM_L", "POLEARM_R", "POLE_Leg_L", "POLE_Leg_R")
 
 
 class CleanupError(Exception):
@@ -105,13 +120,22 @@ def selected_bone_names(armature):
     return names
 
 
-def collect_curves(armature, channels="ALL", selected_only=False):
-    """The pose F-curves to operate on, filtered by channel and selection."""
+def collect_curves(armature, channels="ALL", selected_only=False, bones=None,
+                   no_match_message=None):
+    """The pose F-curves to operate on, filtered by channel and selection.
+
+    ``bones`` restricts the result to an explicit set of bone names, matched
+    case-insensitively -- the pole pass uses it. ``no_match_message`` replaces
+    the generic error when nothing survives the filters, so a caller that
+    asked for specific bones can say which ones it wanted.
+    """
     curves = action_curves(armature)
 
     wanted_bones = selected_bone_names(armature) if selected_only else None
     if selected_only and not wanted_bones:
         raise CleanupError("No bones are selected. Select some, or turn the option off")
+
+    named = {name.lower() for name in bones} if bones is not None else None
 
     out = []
 
@@ -120,6 +144,8 @@ def collect_curves(armature, channels="ALL", selected_only=False):
         if name is None:
             continue
         if wanted_bones is not None and name not in wanted_bones:
+            continue
+        if named is not None and name.lower() not in named:
             continue
 
         kind = channel_kind(fcurve.data_path)
@@ -133,7 +159,7 @@ def collect_curves(armature, channels="ALL", selected_only=False):
         out.append(fcurve)
 
     if not out:
-        raise CleanupError("No matching animation channels found")
+        raise CleanupError(no_match_message or "No matching animation channels found")
 
     return out
 
@@ -397,6 +423,22 @@ def tolerance_for(data_path, tolerance_location, tolerance_rotation_deg):
     return radians
 
 
+def set_interpolation(points, interpolation):
+    """Set every surviving key's interpolation, unless asked to leave it.
+
+    Sparse keys left on LINEAR read as a series of straight segments, which is
+    worse to look at than the jitter that was just removed.
+    """
+    if interpolation == "KEEP":
+        return
+
+    for point in points:
+        point.interpolation = interpolation
+        if interpolation == "BEZIER":
+            point.handle_left_type = "AUTO_CLAMPED"
+            point.handle_right_type = "AUTO_CLAMPED"
+
+
 def decimate_curve(fcurve, tolerance, collapse_static=True, interpolation="BEZIER"):
     """Drop every key the curve can do without. Returns (before, after)."""
     points = fcurve.keyframe_points
@@ -419,13 +461,31 @@ def decimate_curve(fcurve, tolerance, collapse_static=True, interpolation="BEZIE
         if not keep[index]:
             points.remove(points[index], fast=True)
 
-    if interpolation != "KEEP":
-        for point in points:
-            point.interpolation = interpolation
-            if interpolation == "BEZIER":
-                point.handle_left_type = "AUTO_CLAMPED"
-                point.handle_right_type = "AUTO_CLAMPED"
+    set_interpolation(points, interpolation)
+    fcurve.update()
 
+    return before, len(points)
+
+
+def collapse_curve(fcurve, interpolation="BEZIER"):
+    """Reduce a curve to its first keyframe. Returns (before, after).
+
+    Used for channels that are known not to be read at all, where decimating
+    to a tolerance would be pretending there is something to preserve. The
+    first key is kept rather than an average, for the same reason
+    ``decimate_curve``'s static collapse keeps it: it is the value the clip
+    already starts on.
+    """
+    points = fcurve.keyframe_points
+    before = len(points)
+
+    if before < 2:
+        return before, before
+
+    for index in range(before - 1, 0, -1):
+        points.remove(points[index], fast=True)
+
+    set_interpolation(points, interpolation)
     fcurve.update()
 
     return before, len(points)
@@ -463,6 +523,65 @@ def smooth(armature, sigma_frames=1.0, channels="ALL", selected_only=False):
     changed = smooth_curves(curves, sigma_frames)
 
     return {"channels": changed, "sigma": sigma_frames}
+
+
+def simplify_poles(armature, sigma_frames=4.0, tolerance=0.004,
+                   interpolation="BEZIER", bones=POLE_BONES):
+    """Thin the IK pole targets hard. Returns a summary dict.
+
+    The four poles are hints rather than animation, and they are treated as
+    such:
+
+    * **Rotation collapses to one key.** A Blender IK constraint uses a pole
+      target's position and the pole angle. Its orientation is not read by
+      anything, and on the Mesh2Motion rig no bone is parented to a pole, so
+      the rotation curves are carrying nothing.
+    * **Position is blurred and decimated at a loose bound.** The pole sits
+      half a metre out from the limb and only has to point the elbow or knee
+      the right way, so a few millimetres of error is invisible where the same
+      number on a foot control would not be.
+
+    Run it after root motion, which re-keys every frame of every control that
+    hangs off ``DRV_root`` -- the poles included.
+    """
+    curves = collect_curves(
+        armature,
+        bones=bones,
+        no_match_message=(
+            "No animated pole targets found on '{}' (looked for {})".format(
+                armature.name, ", ".join(bones)
+            )
+        ),
+    )
+
+    rotation = [c for c in curves if channel_kind(c.data_path) == "ROTATION"]
+    motion = [c for c in curves if channel_kind(c.data_path) != "ROTATION"]
+
+    before = sum(len(c.keyframe_points) for c in curves)
+
+    for fcurve in rotation:
+        collapse_curve(fcurve, interpolation=interpolation)
+
+    if motion and sigma_frames > 0.0:
+        smooth_curves(motion, sigma_frames)
+
+    for fcurve in motion:
+        decimate_curve(
+            fcurve, tolerance, collapse_static=True, interpolation=interpolation
+        )
+
+    after = sum(len(c.keyframe_points) for c in curves)
+    removed = before - after
+
+    return {
+        "bones": sorted({bone_name(c.data_path) for c in curves}),
+        "channels": len(curves),
+        "rotation_channels": len(rotation),
+        "before": before,
+        "after": after,
+        "removed": removed,
+        "ratio": (removed / float(before)) if before else 0.0,
+    }
 
 
 def decimate(armature, tolerance_location=0.001, tolerance_rotation=0.5,
