@@ -2,25 +2,17 @@ import bpy
 import os
 import sys
 
-## WHAT IS THIS SCRIPT FOR?
-# Each BLEND file only has one animation action. This script consolidates all these actions and
-# creates one GLB file that the Mesh2Motion tool can load.
-# This will make loading faster since it will be one HTTP request
-# if there gets to be a ton of animations, we can revisit this to split things apart.
+ # e.g., "C:\git\mesh2motion-assets\motion-capture\animations\human\combine-and-export.blend"
+current_file_path = bpy.data.filepath 
 
-## INSTRUCTIONS ON HOW TO RUN
-# 1. Open the rig-bird.blend file in Blender. This process should work for all the rig files
-# 2. Open a "Text Editor" view and click New to create a new text area
-# 3. Copy and paste this script into the text area
-# 4. Update the path below to point to the rig you want to create a GLB for
-# 5. Click the "Run Script" (play) button
-# 6. You can put the GLB file in the static > animations folder overwriting the old rig one
+# strips out file name and just has currently directory of this blend file
+base_dir = os.path.dirname(current_file_path)
+
+# name of this file combine-and-export.blend
+blend_filename = os.path.basename(current_file_path)  
 
 
-current_file_path = bpy.data.filepath  # e.g., "C:\git\mesh2motion-assets\rigs\rig-kaiju.blend"
-base_dir = os.path.dirname(current_file_path)  # e.g., "C:\git\mesh2motion-assets\rigs"
-blend_filename = os.path.basename(current_file_path)  # e.g., "rig-kaiju.blend"
-rig_type = blend_filename.replace("rig-", "").replace(".blend", "")  # e.g., "kaiju"
+rig_type = "human"
 
 
 
@@ -29,7 +21,7 @@ rig_type = blend_filename.replace("rig-", "").replace(".blend", "")  # e.g., "ka
 
 # Define the output file path. It will be saved in the same directory as the input files
 blend_dir = os.path.join(base_dir, rig_type)
-output_file = os.path.join(blend_dir, f"{rig_type}-animations.glb")
+output_file = os.path.join(blend_dir, f"{rig_type}-mocap-animations.glb")
 
 
 # Iterate over each Blender file
