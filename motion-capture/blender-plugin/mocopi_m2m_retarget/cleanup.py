@@ -701,6 +701,21 @@ def snap_curve_to_frames(fcurve, frames, interpolation="BEZIER"):
 # Entry points
 # ----------------------------------------------------------------------
 
+def delete_scale(armature):
+    """Delete every scale F-curve from the active action."""
+    curves = action_curves(armature)
+    scale_curves = [
+        fcurve for fcurve in curves
+        if channel_kind(fcurve.data_path) == "SCALE"
+    ]
+    keys = sum(len(fcurve.keyframe_points) for fcurve in scale_curves)
+
+    for fcurve in scale_curves:
+        curves.remove(fcurve)
+
+    return {"channels": len(scale_curves), "keys": keys}
+
+
 def smooth(armature, sigma_frames=1.0, channels="ALL", selected_only=False):
     """Smooth the active action's curves. Returns a summary dict."""
     curves = collect_curves(armature, channels=channels, selected_only=selected_only)

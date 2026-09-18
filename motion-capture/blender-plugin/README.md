@@ -21,7 +21,8 @@ The Rokoko addon is no longer needed.
 1. Opens a file picker for a `.bvh` capture and imports it at **0.01** scale.
    Scene FPS and frame range are set from the capture — the frame range
    matters, because the pole bone bake in `add-ik-bones.py` runs over
-   `frame_start..frame_end`.
+   `frame_start..frame_end`. Scale F-curves are removed from the imported
+   action immediately; the retargeter does not use them.
 2. Appends the **Rig** and **Custom Bone Shapes** collections from the
    bundled `human-mocopi-rig-setup.blend`. Appended, not linked: library
    overrides cannot enter edit mode. Collections already in the scene are
@@ -31,7 +32,7 @@ The Rokoko addon is no longer needed.
 4. Retargets the capture onto the Mesh2Motion armature in the `Rig`
    collection, using `assets/mocopi-to-m2m-bone-map.json`, and bakes the
    result to an action named `<capture> Retarget`. The BVH skeleton is
-   hidden, not deleted, unless you untick **Keep BVH Skeleton**.
+   deleted by default; enable **Keep BVH Skeleton** to retain and hide it.
 5. Smooths the baked curves, to take the sensor jitter out of the capture.
    See below.
 6. Extracts root motion: the horizontal travel moves out of the hips and onto
@@ -87,10 +88,18 @@ retrying.
 
 ## Smoothing and decimation
 
-Three passes, deliberately separate, on whatever action the active armature is
-holding. All three are panel buttons under **Cleanup** and all three are
-checkboxes on the import operator. Order matters: **smooth, then root motion,
-then poles, then decimate** — which is the order the import runs them in.
+The cleanup tools operate on whatever action the active armature is holding.
+Scale removal is automatic on import and is also available as **Delete Scale
+Keyframes** in the panel. The smoothing, pole simplification, and decimation
+passes are both panel buttons and import options. Order matters: **remove
+scale, smooth, then root motion, then poles, then decimate** — which is the
+order the import runs them in.
+
+### Delete Scale Keyframes
+
+Removes every object and pose-bone scale F-curve from the active action. The
+retargeting workflow does not use scale animation, so retaining those dense
+curves only increases the action and exported file size.
 
 ### Smooth Keyframes
 

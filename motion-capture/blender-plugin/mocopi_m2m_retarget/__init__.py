@@ -3,7 +3,8 @@
 Blender extension that collapses the manual Mocopi -> Mesh2Motion retargeting
 workflow into a single button:
 
-  1. Pick a Mocopi BVH capture and import it at 0.01 scale.
+  1. Pick a Mocopi BVH capture, import it at 0.01 scale, and remove its unused
+      scale animation curves.
   2. Append the reference IK rig collections from the bundled .blend.
   3. Re-select the freshly imported BVH skeleton and run retarget-master.py,
      which expands the arms and builds the elbow / knee pole bones.
@@ -327,7 +328,7 @@ class M2M_OT_load_mocopi_bvh(Operator, ImportHelper):
     keep_source: BoolProperty(
         name="Keep BVH Skeleton",
         description="Leave the imported Mocopi skeleton in the scene after retargeting",
-        default=True,
+        default=False,
     )
 
     extract_root_motion: BoolProperty(
@@ -510,6 +511,22 @@ class M2M_OT_load_mocopi_bvh(Operator, ImportHelper):
             return {"CANCELLED"}
 
         summary = ["Imported {}".format(os.path.basename(filepath))]
+
+        try:
+            scale_result = cleanup.delete_scale(armature)
+        except cleanup.CleanupError as exc:
+            self.report({"WARNING"}, "Scale cleanup skipped: {}".format(exc))
+        except Exception as exc:
+            traceback.print_exc()
+            self.report(
+                {"WARNING"},
+                "Scale cleanup failed: {} (see system console)".format(exc),
+            )
+        else:
+            if scale_result["keys"]:
+                summary.append(
+                    "removed {} scale keyframes".format(scale_result["keys"])
+                )
 
         # --- 2. Append the reference IK rig ------------------------------
         if self.append_reference_rig:
@@ -866,6 +883,37 @@ class CleanupOperatorBase:
         )
 
 
+class M2M_OT_delete_scale_keyframes(CleanupOperatorBase, Operator):
+    """Delete all scale keyframes from the active armature's action"""
+
+    bl_idname = "m2m.delete_scale_keyframes"
+    bl_label = "Delete Scale Keyframes"
+
+    def execute(self, context):
+        ensure_object_mode()
+
+        try:
+            result = cleanup.delete_scale(context.object)
+        except cleanup.CleanupError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        except Exception as exc:
+            traceback.print_exc()
+            self.report(
+                {"ERROR"},
+                "Scale cleanup failed: {} (see system console)".format(exc),
+            )
+            return {"CANCELLED"}
+
+        self.report(
+            {"INFO"},
+            "Removed {} scale keyframes across {} channels".format(
+                result["keys"], result["channels"]
+            ),
+        )
+        return {"FINISHED"}
+
+
 class M2M_OT_smooth_keyframes(CleanupOperatorBase, Operator):
     """Blur the active armature's animation along time, to take the sensor
     jitter out of a capture. Keyframe count is unchanged"""
@@ -1173,6 +1221,9 @@ class M2M_PT_mocopi_panel(Panel):
         layout.label(text="Cleanup")
 
         column = layout.column(align=True)
+        column.operator(
+            M2M_OT_delete_scale_keyframes.bl_idname, icon="KEYFRAME_HLT"
+        )
         column.operator(M2M_OT_smooth_keyframes.bl_idname, icon="SMOOTHCURVE")
         column.operator(M2M_OT_simplify_poles.bl_idname, icon="CON_KINEMATIC")
         column.operator(M2M_OT_decimate_keyframes.bl_idname, icon="DECORATE_KEYFRAME")
@@ -1191,6 +1242,7 @@ classes = (
     M2M_OT_load_mocopi_bvh,
     M2M_OT_extract_root_motion,
     M2M_OT_offset_character,
+    M2M_OT_delete_scale_keyframes,
     M2M_OT_smooth_keyframes,
     M2M_OT_simplify_poles,
     M2M_OT_decimate_keyframes,

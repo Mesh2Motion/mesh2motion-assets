@@ -103,8 +103,10 @@ for frame in range(FRAMES):
             0.0,
             0.0,
         )
+        pose_bone.scale = (1.0, 1.0, 1.0)
         pose_bone.keyframe_insert("location", frame=frame)
         pose_bone.keyframe_insert("rotation_quaternion", frame=frame)
+        pose_bone.keyframe_insert("scale", frame=frame)
 
 bpy.context.view_layer.objects.active = armature
 curves = cleanup.action_curves(armature)
@@ -125,10 +127,36 @@ def world_path():
 
 
 # ----------------------------------------------------------------------
-# 1. Smooth: values change, key count does not
+# 1. Scale cleanup: scale curves disappear, other curves survive
 # ----------------------------------------------------------------------
 
-print("\n1. smooth at the default 1 frame")
+print("\n1. delete scale keyframes")
+curves = cleanup.action_curves(armature)
+scale_keys = sum(
+    len(c.keyframe_points)
+    for c in curves
+    if cleanup.channel_kind(c.data_path) == "SCALE"
+)
+non_scale_channels = sum(
+    1 for c in curves if cleanup.channel_kind(c.data_path) != "SCALE"
+)
+check(scale_keys > 0, "test rig has scale keyframes", scale_keys)
+
+result = bpy.ops.m2m.delete_scale_keyframes()
+check(result == {"FINISHED"}, "operator FINISHED", result)
+curves = cleanup.action_curves(armature)
+check(
+    not any(cleanup.channel_kind(c.data_path) == "SCALE" for c in curves),
+    "all scale curves removed",
+)
+check(len(curves) == non_scale_channels, "non-scale curves preserved", len(curves))
+
+
+# ----------------------------------------------------------------------
+# 2. Smooth: values change, key count does not
+# ----------------------------------------------------------------------
+
+print("\n2. smooth at the default 1 frame")
 before_count = sum(len(c.keyframe_points) for c in curves)
 result = bpy.ops.m2m.smooth_keyframes()
 check(result == {"FINISHED"}, "operator FINISHED", result)
@@ -162,10 +190,10 @@ check(biggest_step < 25.0, "no full-turn swing at the sign flip", biggest_step)
 
 
 # ----------------------------------------------------------------------
-# 2. Root motion: travel moves to DRV_root, world pose unchanged
+# 3. Root motion: travel moves to DRV_root, world pose unchanged
 # ----------------------------------------------------------------------
 
-print("\n2. extract root motion")
+print("\n3. extract root motion")
 before_path = world_path()
 result = bpy.ops.m2m.extract_root_motion()
 check(result == {"FINISHED"}, "operator FINISHED", result)
@@ -187,10 +215,10 @@ check(root_travel > 1.5, "root carries the forward travel", root_travel)
 
 
 # ----------------------------------------------------------------------
-# 3. Simplify poles at the new 0.4.1 defaults (6 frames / 10mm)
+# 4. Simplify poles at the new 0.4.1 defaults (6 frames / 10mm)
 # ----------------------------------------------------------------------
 
-print("\n3. simplify poles at 6 frames / 10mm")
+print("\n4. simplify poles at 6 frames / 10mm")
 pole_before = sum(
     len(c.keyframe_points)
     for c in cleanup.action_curves(armature)
@@ -230,10 +258,10 @@ check(non_pole_before == non_pole_after, "nothing else touched")
 
 
 # ----------------------------------------------------------------------
-# 4. Decimate at the defaults, and check the error bound holds
+# 5. Decimate at the defaults, and check the error bound holds
 # ----------------------------------------------------------------------
 
-print("\n4. decimate at 0.5 deg / 1mm")
+print("\n5. decimate at 0.5 deg / 1mm")
 sampled = {}
 for fcurve in cleanup.action_curves(armature):
     key = (fcurve.data_path, fcurve.array_index)
