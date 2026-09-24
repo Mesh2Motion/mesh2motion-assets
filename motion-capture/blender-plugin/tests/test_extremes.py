@@ -71,16 +71,6 @@ def build_rig():
     return armature
 
 
-def build_euler_rig():
-    bpy.ops.object.armature_add(enter_editmode=True)
-    armature = bpy.context.object
-    armature.name = "EulerTurnRig"
-    armature.data.edit_bones[0].name = "CTRL_Turn"
-    bpy.ops.object.mode_set(mode="OBJECT")
-    armature.pose.bones["CTRL_Turn"].rotation_mode = "XYZ"
-    return armature
-
-
 def build_quaternion_rig():
     bpy.ops.object.armature_add(enter_editmode=True)
     armature = bpy.context.object
@@ -294,64 +284,10 @@ check(
 
 
 # ----------------------------------------------------------------------
-# 7. Wrapped Euler turns keep their dense direction
+# 7. The panel draws -- i.e. every icon name is real
 # ----------------------------------------------------------------------
 
-print("\n7. wrapped Euler turn")
-turn_armature = build_euler_rig()
-turn_bone = turn_armature.pose.bones["CTRL_Turn"]
-TURN_LAST = 39
-TURN_EXTREMES = [0, 20, TURN_LAST]
-
-for frame in range(TURN_LAST + 1):
-    bpy.context.scene.frame_set(frame)
-    angle = (frame / float(TURN_LAST)) * math.tau
-    wrapped = (angle + math.pi) % math.tau - math.pi
-    turn_bone.rotation_euler = (0.0, 0.0, wrapped)
-    turn_bone.keyframe_insert("rotation_euler", frame=frame)
-
-turn_curves = cleanup.action_curves(turn_armature)
-for fcurve in turn_curves:
-    if fcurve.array_index == 2:
-        for point in fcurve.keyframe_points:
-            if int(round(point.co[0])) in TURN_EXTREMES:
-                point.type = "EXTREME"
-
-bpy.context.view_layer.objects.active = turn_armature
-result = bpy.ops.m2m.delete_non_extreme()
-check(result == {"FINISHED"}, "wrapped Euler operator FINISHED", result)
-
-z_curve = [c for c in cleanup.action_curves(turn_armature) if c.array_index == 2][0]
-z_frames = [int(round(point.co[0])) for point in z_curve.keyframe_points]
-z_values = [point.co[1] for point in z_curve.keyframe_points]
-z_steps = [z_values[i + 1] - z_values[i] for i in range(len(z_values) - 1)]
-check(
-    all(frame in z_frames for frame in TURN_EXTREMES),
-    "wrapped Euler keeps the marked extremes",
-    z_frames,
-)
-check(
-    len(z_frames) > len(TURN_EXTREMES),
-    "wrapped Euler keeps rotation guard frames",
-    z_frames,
-)
-check(
-    all(0.0 < step < math.pi for step in z_steps),
-    "wrapped Euler values unwrap forward",
-    z_values,
-)
-check(
-    z_values[-1] > math.tau - 0.001,
-    "final Euler key keeps the full turn equivalent",
-    z_values[-1],
-)
-
-
-# ----------------------------------------------------------------------
-# 8. The panel draws -- i.e. every icon name is real
-# ----------------------------------------------------------------------
-
-print("\n8. panel icons")
+print("\n7. panel icons")
 icons = bpy.types.UILayout.bl_rna.functions["operator"].parameters["icon"]
 valid = {item.identifier for item in icons.enum_items}
 for name in ("ARMATURE_DATA", "ORIENTATION_PARENT", "SMOOTHCURVE",
@@ -360,10 +296,10 @@ for name in ("ARMATURE_DATA", "ORIENTATION_PARENT", "SMOOTHCURVE",
 
 
 # ----------------------------------------------------------------------
-# 9. selected_only and channel filtering still work on this pass
+# 8. selected_only and channel filtering still work on this pass
 # ----------------------------------------------------------------------
 
-print("\n9. filters")
+print("\n8. filters")
 try:
     cleanup.delete_non_extreme(armature, selected_only=True)
 except cleanup.CleanupError as exc:

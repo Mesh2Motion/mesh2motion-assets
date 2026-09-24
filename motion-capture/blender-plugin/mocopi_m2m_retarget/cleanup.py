@@ -57,7 +57,7 @@ Everything here operates on whatever action the active armature is holding.
 import math
 
 import bpy
-from mathutils import Euler, Quaternion
+from mathutils import Quaternion
 
 from .retarget_engine import current_slot, fcurves_for
 
@@ -626,7 +626,6 @@ def decimate_curves(curves, tolerance_location, tolerance_rotation_deg,
 # ----------------------------------------------------------------------
 
 EXTREME_KEY_TYPE = "EXTREME"
-ROTATION_GUARD_MAX_ANGLE = math.radians(120.0)
 
 
 def extreme_frames(armature):
@@ -699,65 +698,6 @@ def snap_curve_to_frames(fcurve, frames, interpolation="BEZIER"):
     return before, len(points), len(sampled)
 
 
-def rotation_order(armature, data_path):
-    """Euler order for a pose-bone rotation curve, defaulting to Blender's XYZ."""
-    name = bone_name(data_path)
-    if name is None:
-        return "XYZ"
-
-    pose_bone = armature.pose.bones.get(name)
-    mode = getattr(pose_bone, "rotation_mode", "XYZ") if pose_bone else "XYZ"
-    return mode if mode in {"XYZ", "XZY", "YXZ", "YZX", "ZXY", "ZYX"} else "XYZ"
-
-
-def align_euler_group(armature, data_path, by_index, interpolation=None):
-    """Choose equivalent Euler values that interpolate continuously."""
-    curves = [by_index.get(i) for i in range(3)]
-    if any(curve is None for curve in curves):
-        return False
-
-    point_sets = [list(curve.keyframe_points) for curve in curves]
-    count = len(point_sets[0])
-    if count == 0 or any(len(points) != count for points in point_sets):
-        return False
-
-    frames = [[int(round(point.co[0])) for point in points] for points in point_sets]
-    if any(channel_frames != frames[0] for channel_frames in frames[1:]):
-        return False
-
-    order = rotation_order(armature, data_path)
-    values = [[], [], []]
-    previous = None
-
-    for index in range(count):
-        euler = Euler(tuple(points[index].co[1] for points in point_sets), order)
-        if previous is not None:
-            euler.make_compatible(previous)
-        previous = euler.copy()
-
-        for channel in range(3):
-            values[channel].append(euler[channel])
-
-    for channel, curve in enumerate(curves):
-        write_values(curve, values[channel])
-        if interpolation is not None:
-            set_interpolation(curve.keyframe_points, interpolation)
-        curve.update()
-
-    return True
-
-
-def align_euler_curves(armature, curves, interpolation=None):
-    """Repair Euler channels before and after frame snapping."""
-    groups = {}
-    for fcurve in curves:
-        if fcurve.data_path.endswith("rotation_euler"):
-            groups.setdefault(fcurve.data_path, {})[fcurve.array_index] = fcurve
-
-    for data_path, by_index in groups.items():
-        align_euler_group(armature, data_path, by_index, interpolation)
-
-
 def align_quaternion_group(by_index, interpolation=None):
     """Choose quaternion signs that interpolate through the short arc."""
     curves = [by_index.get(index) for index in range(4)]
@@ -813,83 +753,6 @@ def align_quaternion_curves(curves, interpolation=None):
 
     for by_index in groups.values():
         align_quaternion_group(by_index, interpolation)
-
-
-def quaternion_angle(a, b):
-    """Shortest angular distance between two quaternions."""
-    dot = abs(sum(a[index] * b[index] for index in range(4)))
-    return 2.0 * math.acos(min(1.0, max(-1.0, dot)))
-
-
-def rotation_guard_orientation(armature, data_path, by_index, frame):
-    """Rotation at ``frame`` as a normalised quaternion, or None."""
-    if data_path.endswith("rotation_euler"):
-        curves = [by_index.get(index) for index in range(3)]
-        if any(curve is None for curve in curves):
-            return None
-
-        order = rotation_order(armature, data_path)
-        return Euler(tuple(curve.evaluate(frame) for curve in curves), order).to_quaternion()
-
-    if data_path.endswith("rotation_quaternion"):
-        curves = [by_index.get(index) for index in range(4)]
-        if any(curve is None for curve in curves):
-            return None
-
-        quaternion = Quaternion(tuple(curve.evaluate(frame) for curve in curves))
-        if quaternion.magnitude < 1e-12:
-            return None
-        quaternion.normalize()
-        return quaternion
-
-    return None
-
-
-def rotation_guard_frames(armature, curves, frames,
-                          max_angle=ROTATION_GUARD_MAX_ANGLE):
-    """Unmarked source frames needed to keep large turns well sampled."""
-    if len(frames) < 2:
-        return []
-
-    groups = {}
-    for fcurve in curves:
-        if fcurve.data_path.endswith(("rotation_euler", "rotation_quaternion")):
-            groups.setdefault(fcurve.data_path, {})[fcurve.array_index] = fcurve
-
-    wanted = set(frames)
-    guarded = set()
-
-    for data_path, by_index in groups.items():
-        source_frames = set()
-        for fcurve in by_index.values():
-            source_frames.update(int(round(point.co[0])) for point in fcurve.keyframe_points)
-
-        for start, end in zip(frames, frames[1:]):
-            samples = [frame for frame in sorted(source_frames) if start <= frame <= end]
-            if start not in samples:
-                samples.insert(0, start)
-            if end not in samples:
-                samples.append(end)
-            samples = sorted(set(samples))
-
-            previous = rotation_guard_orientation(armature, data_path, by_index, samples[0])
-            if previous is None:
-                continue
-
-            travelled = 0.0
-            for frame in samples[1:]:
-                current = rotation_guard_orientation(armature, data_path, by_index, frame)
-                if current is None:
-                    break
-
-                travelled += quaternion_angle(previous, current)
-                if travelled >= max_angle and frame not in wanted:
-                    guarded.add(frame)
-                    travelled = 0.0
-
-                previous = current
-
-    return sorted(guarded)
 
 
 # ----------------------------------------------------------------------
@@ -1027,12 +890,8 @@ def delete_non_extreme(armature, channels="ALL", selected_only=False,
     before = 0
     after = 0
     inserted = 0
-    extreme_count = len(frames)
 
     align_quaternion_curves(curves)
-    align_euler_curves(armature, curves)
-    guarded_frames = rotation_guard_frames(armature, curves, frames)
-    frames = sorted(set(frames) | set(guarded_frames))
 
     for fcurve in curves:
         curve_before, curve_after, curve_inserted = snap_curve_to_frames(
@@ -1043,7 +902,6 @@ def delete_non_extreme(armature, channels="ALL", selected_only=False,
         inserted += curve_inserted
 
     align_quaternion_curves(curves, "LINEAR")
-    align_euler_curves(armature, curves, interpolation)
 
     total = before + inserted
     removed = total - after
@@ -1051,13 +909,11 @@ def delete_non_extreme(armature, channels="ALL", selected_only=False,
     return {
         "channels": len(curves),
         "frames": len(frames),
-        "extremes": extreme_count,
         "first": frames[0],
         "last": frames[-1],
         "before": before,
         "after": after,
         "inserted": inserted,
-        "guarded": len(guarded_frames),
         "removed": removed,
         "ratio": (removed / float(total)) if total else 0.0,
     }
