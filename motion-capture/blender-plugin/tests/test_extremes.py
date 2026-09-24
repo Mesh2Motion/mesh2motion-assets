@@ -12,6 +12,7 @@ Exits non-zero on the first failure, so it works as a CI step. It builds
 its own synthetic rig and never touches the bundled .blend.
 """
 
+import math
 import os
 import sys
 
@@ -67,6 +68,26 @@ def build_rig():
         bone.tail = (0.0, 0.0, 2.0)
 
     bpy.ops.object.mode_set(mode="OBJECT")
+    return armature
+
+
+def build_euler_rig():
+    bpy.ops.object.armature_add(enter_editmode=True)
+    armature = bpy.context.object
+    armature.name = "EulerTurnRig"
+    armature.data.edit_bones[0].name = "CTRL_Turn"
+    bpy.ops.object.mode_set(mode="OBJECT")
+    armature.pose.bones["CTRL_Turn"].rotation_mode = "XYZ"
+    return armature
+
+
+def build_quaternion_rig():
+    bpy.ops.object.armature_add(enter_editmode=True)
+    armature = bpy.context.object
+    armature.name = "QuaternionZeroCrossRig"
+    armature.data.edit_bones[0].name = "CTRL_Foot"
+    bpy.ops.object.mode_set(mode="OBJECT")
+    armature.pose.bones["CTRL_Foot"].rotation_mode = "QUATERNION"
     return armature
 
 
@@ -177,9 +198,37 @@ check(
     "{} vs {}".format(value_at_23_before, value_at_23_after),
 )
 
-# Surviving keys got the interpolation the operator promises.
-interpolations = {p.interpolation for c in curves for p in c.keyframe_points}
-check(interpolations == {"BEZIER"}, "surviving keys set to Bezier", interpolations)
+# Surviving non-rotation keys got the interpolation the operator promises;
+# quaternion rotation channels stay linear so component handles cannot whip
+# through a zero crossing.
+non_rotation_interpolations = {
+    point.interpolation
+    for curve in curves
+    if not curve.data_path.endswith("rotation_quaternion")
+    for point in curve.keyframe_points
+}
+quaternion_interpolations = {
+    point.interpolation
+    for curve in curves
+    if curve.data_path.endswith("rotation_quaternion")
+    for point in curve.keyframe_points
+}
+check(
+    non_rotation_interpolations == {"BEZIER"},
+    "surviving non-rotation keys set to Bezier",
+    non_rotation_interpolations,
+)
+check(
+    quaternion_interpolations == {"LINEAR"},
+    "surviving quaternion keys set to Linear",
+    quaternion_interpolations,
+)
+
+z_quaternion_curves = [
+    curve for curve in curves
+    if curve.data_path.endswith("rotation_quaternion") and curve.array_index == 3
+]
+check(z_quaternion_curves, "test rig has quaternion Z curves")
 
 
 # ----------------------------------------------------------------------
@@ -197,10 +246,112 @@ check(
 
 
 # ----------------------------------------------------------------------
-# 6. The panel draws -- i.e. every icon name is real
+# 6. Quaternion Z zero-crossings do not get Bezier handles
 # ----------------------------------------------------------------------
 
-print("\n6. panel icons")
+print("\n6. quaternion Z zero-crossing")
+quat_armature = build_quaternion_rig()
+quat_bone = quat_armature.pose.bones["CTRL_Foot"]
+QUAT_LAST = 32
+QUAT_EXTREMES = [0, 16, QUAT_LAST]
+
+for frame in range(QUAT_LAST + 1):
+    bpy.context.scene.frame_set(frame)
+    angle = math.radians(50.0 - 100.0 * frame / float(QUAT_LAST))
+    quat_bone.rotation_quaternion = (
+        math.cos(angle / 2.0),
+        0.0,
+        0.0,
+        math.sin(angle / 2.0),
+    )
+    quat_bone.keyframe_insert("rotation_quaternion", frame=frame)
+
+quat_curves = cleanup.action_curves(quat_armature)
+for fcurve in quat_curves:
+    for point in fcurve.keyframe_points:
+        if int(round(point.co[0])) in QUAT_EXTREMES:
+            point.type = "EXTREME"
+
+bpy.context.view_layer.objects.active = quat_armature
+result = bpy.ops.m2m.delete_non_extreme()
+check(result == {"FINISHED"}, "quaternion zero-crossing operator FINISHED", result)
+
+quat_curves = cleanup.action_curves(quat_armature)
+quat_interpolations = {
+    point.interpolation
+    for curve in quat_curves
+    if curve.data_path.endswith("rotation_quaternion")
+    for point in curve.keyframe_points
+}
+z_curve = [curve for curve in quat_curves if curve.array_index == 3][0]
+z_values = [point.co[1] for point in z_curve.keyframe_points]
+check(min(z_values) < 0.0 < max(z_values), "quaternion Z crosses zero", z_values)
+check(
+    quat_interpolations == {"LINEAR"},
+    "quaternion Z zero-crossing stays linear",
+    quat_interpolations,
+)
+
+
+# ----------------------------------------------------------------------
+# 7. Wrapped Euler turns keep their dense direction
+# ----------------------------------------------------------------------
+
+print("\n7. wrapped Euler turn")
+turn_armature = build_euler_rig()
+turn_bone = turn_armature.pose.bones["CTRL_Turn"]
+TURN_LAST = 39
+TURN_EXTREMES = [0, 20, TURN_LAST]
+
+for frame in range(TURN_LAST + 1):
+    bpy.context.scene.frame_set(frame)
+    angle = (frame / float(TURN_LAST)) * math.tau
+    wrapped = (angle + math.pi) % math.tau - math.pi
+    turn_bone.rotation_euler = (0.0, 0.0, wrapped)
+    turn_bone.keyframe_insert("rotation_euler", frame=frame)
+
+turn_curves = cleanup.action_curves(turn_armature)
+for fcurve in turn_curves:
+    if fcurve.array_index == 2:
+        for point in fcurve.keyframe_points:
+            if int(round(point.co[0])) in TURN_EXTREMES:
+                point.type = "EXTREME"
+
+bpy.context.view_layer.objects.active = turn_armature
+result = bpy.ops.m2m.delete_non_extreme()
+check(result == {"FINISHED"}, "wrapped Euler operator FINISHED", result)
+
+z_curve = [c for c in cleanup.action_curves(turn_armature) if c.array_index == 2][0]
+z_frames = [int(round(point.co[0])) for point in z_curve.keyframe_points]
+z_values = [point.co[1] for point in z_curve.keyframe_points]
+z_steps = [z_values[i + 1] - z_values[i] for i in range(len(z_values) - 1)]
+check(
+    all(frame in z_frames for frame in TURN_EXTREMES),
+    "wrapped Euler keeps the marked extremes",
+    z_frames,
+)
+check(
+    len(z_frames) > len(TURN_EXTREMES),
+    "wrapped Euler keeps rotation guard frames",
+    z_frames,
+)
+check(
+    all(0.0 < step < math.pi for step in z_steps),
+    "wrapped Euler values unwrap forward",
+    z_values,
+)
+check(
+    z_values[-1] > math.tau - 0.001,
+    "final Euler key keeps the full turn equivalent",
+    z_values[-1],
+)
+
+
+# ----------------------------------------------------------------------
+# 8. The panel draws -- i.e. every icon name is real
+# ----------------------------------------------------------------------
+
+print("\n8. panel icons")
 icons = bpy.types.UILayout.bl_rna.functions["operator"].parameters["icon"]
 valid = {item.identifier for item in icons.enum_items}
 for name in ("ARMATURE_DATA", "ORIENTATION_PARENT", "SMOOTHCURVE",
@@ -209,10 +360,10 @@ for name in ("ARMATURE_DATA", "ORIENTATION_PARENT", "SMOOTHCURVE",
 
 
 # ----------------------------------------------------------------------
-# 7. selected_only and channel filtering still work on this pass
+# 9. selected_only and channel filtering still work on this pass
 # ----------------------------------------------------------------------
 
-print("\n7. filters")
+print("\n9. filters")
 try:
     cleanup.delete_non_extreme(armature, selected_only=True)
 except cleanup.CleanupError as exc:
