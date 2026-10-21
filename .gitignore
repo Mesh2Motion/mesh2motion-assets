@@ -1,3 +1,9 @@
 # ignore backup blender files
 *.blend1
 *.pyc
+
+# Ignore Claude conversation logs, memory, or local state
+.claude/
+.claude.json
+*.claude-session
+CLAUDE.md
