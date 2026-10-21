@@ -32,13 +32,14 @@ blend_dir = os.path.join(base_dir, rig_type)
 output_file = os.path.join(blend_dir, f"{rig_type}-animations.glb")
 
 
-# Iterate over each Blender file
-for file in os.listdir(blend_dir):
-    if file.endswith(".blend") and "animation" in file.lower():
-        # Append actions from the file
-        filepath = os.path.join(blend_dir, file)
-        with bpy.data.libraries.load(filepath) as (data_from, data_to):
-            data_to.actions = data_from.actions
+# Iterate over each Blender file, including sub-folders (e.g. human/attacks)
+for folder, _, files in os.walk(blend_dir):
+    for file in files:
+        if file.endswith(".blend") and "animation" in file.lower():
+            # Append actions from the file
+            filepath = os.path.join(folder, file)
+            with bpy.data.libraries.load(filepath) as (data_from, data_to):
+                data_to.actions = data_from.actions
 
 
 # assign all actions to the armature so they get exported. This is newer in Blender 5.0
