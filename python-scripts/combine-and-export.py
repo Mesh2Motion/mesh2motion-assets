@@ -32,7 +32,7 @@ blend_dir = os.path.join(base_dir, rig_type)
 output_file = os.path.join(blend_dir, f"{rig_type}-animations.glb")
 
 
-# Iterate over each Blender file, including sub-folders (e.g. human/attacks)
+# Iterate over each Blender file, including sub-folders (e.g. human/combat/melee)
 for folder, _, files in os.walk(blend_dir):
     for file in files:
         if file.endswith(".blend") and "animation" in file.lower():
