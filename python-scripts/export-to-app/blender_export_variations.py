@@ -85,6 +85,12 @@ for file in sorted(os.listdir(variations_dir)):
     ))
     print(f"Exported {file} -> {rig_type}/variations/{slug}.glb")
 
-with open(os.path.join(out_root, "variations.json"), "w", encoding="utf-8") as f:
-    json.dump(variations, f, indent=2)
+# A run limited to some rigs keeps the other rigs' entries; export.mjs --skip-blender rewrites every rig from this file
+variations_path = os.path.join(out_root, "variations.json")
+kept = {}
+if rigs is not None and os.path.exists(variations_path):
+    with open(variations_path, encoding="utf-8") as f:
+        kept = {rig: v for rig, v in json.load(f).items() if rig not in rigs}
+with open(variations_path, "w", encoding="utf-8") as f:
+    json.dump(dict(sorted({**kept, **variations}.items())), f, indent=2)
 print("RESULT_JSON" + json.dumps({rig: len(v) for rig, v in variations.items()}))

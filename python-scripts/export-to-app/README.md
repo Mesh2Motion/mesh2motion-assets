@@ -126,7 +126,8 @@ Unchanged props export byte-identical files (GLB and PNG), so `hash` only change
    pinned to their rig defaults, a loop's repeated last frame is dropped, and clips are slid to start at 0 s.
 2. `export.mjs` then, for every GLB:
    - removes keys that linear interpolation already reproduces (the exporter bakes every frame),
-   - removes channels that hold a bone at its rest pose for the whole clip,
+   - collapses channels that hold a bone at its rest pose for the whole clip to one key at 0 s, and adds that key
+     for any bone without a channel, so every bone has translation, rotation and scale keyed on the first frame,
    - compresses with `EXT_meshopt_compression` (16-bit quaternions, 12-bit translations),
    - re-reads the result and compares it with Blender's output on every frame. It warns if any bone is off by more
      than 0.25° or 3 mm. Today the worst cases are 0.19° (human Spin_Death) and 2.6 mm (human Land_Three_Point).
@@ -147,5 +148,5 @@ const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
 const clip = (await loader.loadAsync(`${base}/${anim.file}`)).animations[0];
 ```
 
-Bones that a clip leaves at rest have no track. three.js leaves untracked bones as they are, so reset the skeleton
-to its rest pose (`skeleton.pose()`) when switching clips.
+Every clip has a track for every bone (bones it leaves at rest get a single key), so switching clips never leaves
+a bone posed by the previous clip.

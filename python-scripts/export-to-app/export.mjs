@@ -90,11 +90,14 @@ const MAX_ROTATION_ERROR_DEG = 0.25;
 const MAX_TRANSLATION_ERROR_M = 0.003;
 
 // The exporter bakes translation, rotation and scale for every bone, even the ones that never leave the rest pose.
-// A channel that holds the bone's rest value on every key changes nothing, so remove it (most of the file's size
-// is the JSON describing channels, not the key data).
-function removeRestChannels () {
+// A channel that holds the bone's rest value on every key only needs one key, so replace it with a single rest key
+// at 0 s. Every bone still gets a key on the first frame: three.js leaves a bone without a track wherever the
+// previous clip put it, so a missing channel bleeds the old pose into the new clip.
+function collapseRestChannels () {
   return (doc) => {
     const eps = 1e-5;
+    const buffer = doc.getRoot().listBuffers()[0];
+    const startTime = doc.createAccessor().setType('SCALAR').setArray(new Float32Array([0])).setBuffer(buffer);
     for (const animation of doc.getRoot().listAnimations()) {
       for (const channel of animation.listChannels()) {
         const node = channel.getTargetNode();
@@ -118,19 +121,29 @@ function removeRestChannels () {
           if (sampler.listParents().every(p => p === animation || p.propertyType === 'Root')) sampler.dispose();
         }
       }
+      // Add the single rest key to every joint and path that now has no channel
+      const keyed = new Set(animation.listChannels().map(c => `${c.getTargetNode()?.getName()}|${c.getTargetPath()}`));
+      for (const node of new Set(doc.getRoot().listSkins().flatMap(s => s.listJoints()))) {
+        for (const [path, getter, type] of [['translation', 'getTranslation', 'VEC3'], ['rotation', 'getRotation', 'VEC4'], ['scale', 'getScale', 'VEC3']]) {
+          if (keyed.has(`${node.getName()}|${path}`)) continue;
+          const output = doc.createAccessor().setType(type).setArray(new Float32Array(node[getter]())).setBuffer(buffer);
+          const sampler = doc.createAnimationSampler().setInput(startTime).setOutput(output).setInterpolation('LINEAR');
+          animation.addSampler(sampler).addChannel(doc.createAnimationChannel().setTargetNode(node).setTargetPath(path).setSampler(sampler));
+        }
+      }
     }
   };
 }
 
-// Animation-only GLB: drop redundant keys (the exporter bakes every frame) and channels stuck at the rest pose,
-// share identical accessors, then meshopt-compress. The "filter" method stores rotations as 16-bit quaternions and
+// Animation-only GLB: drop redundant keys (the exporter bakes every frame), collapse channels stuck at the rest pose
+// to one key, share identical accessors, then meshopt-compress. The "filter" method stores rotations as 16-bit quaternions and
 // translations as 12-bit exponential floats, so the app needs MeshoptDecoder
 // (three.js: gltfLoader.setMeshoptDecoder(MeshoptDecoder)).
 async function writeAnimation (src, dest) {
   const doc = await io.read(src);
   await doc.transform(
     resample({ tolerance: 1e-4 }),
-    removeRestChannels(),
+    collapseRestChannels(),
     prune({ propertyTypes: [PropertyType.ACCESSOR, PropertyType.ANIMATION_SAMPLER] }),
     dedup()
   );
