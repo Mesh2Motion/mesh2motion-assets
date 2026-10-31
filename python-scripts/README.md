@@ -37,9 +37,32 @@ Go into this folder and run this command.
     blender -b "C:\\git\\mesh2motion-assets\\rigs\\rig-human.blend" --python "C:\\git\\mesh2motion-assets\\python-scripts\\combine-and-export.py"
 
 
+## Start an animation at frame 0
+
+Animations must start at frame 0. This moves every key, the scene and action frame ranges and the timeline markers back by the same amount, so playback doesn't change. Without `--save` it only reports what it would do.
+
+    blender -b "<animation.blend>" --python shift-animation-to-frame-0.py -- --save
+
+
 ## Testing animations
 
 Good website where you can test out bones to make sure only DEF bones are getting exported as well as action names.
 
 https://sandbox.babylonjs.com/
 
+
+
+## Human arm IK/FK snapping
+
+The human rig arms can be animated with IK (`CTRL_Arm_*`, `POLEARM_*`) or FK (`FK_upper_arm_*`, `FK_forearm_*`, `FK_hand_*`). The `FK_L` / `FK_R` custom properties on the armature object (Properties → Object → Custom Properties) switch between them (0 = IK, 1 = FK) and can be keyed.
+
+Open `human-ik-fk-snap.py` in Blender's Text Editor and click Run Script. The 3D viewport's N panel gets an "M2M" tab with an FK slider per arm and "IK → FK" / "FK → IK" buttons. These match one chain to the other on the current frame, so switching doesn't pop. With "Key on snap" on, they also key the snapped controls and the switch.
+
+
+## Export to app (one file per animation + manifest)
+
+Writes every rig to `export_to_app/`: a `manifest.json` listing each rig's animations (name, tags, loop, root motion, WIP, duration, file, hash), the rig model, and one compressed GLB per animation. See `export-to-app/README.md`.
+
+    cd python-scripts/export-to-app
+    npm install
+    node export.mjs

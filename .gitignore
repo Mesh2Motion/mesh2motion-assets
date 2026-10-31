@@ -7,3 +7,9 @@
 .claude.json
 *.claude-session
 CLAUDE.md
+
+# export-to-app tooling dependencies
+node_modules/
+
+# per-animation app export output (python-scripts/export-to-app)
+export_to_app/

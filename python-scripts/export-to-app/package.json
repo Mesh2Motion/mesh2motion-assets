@@ -1,0 +1,15 @@
+{
+  "name": "mesh2motion-export-to-app",
+  "private": true,
+  "type": "module",
+  "description": "Exports every rig's animations as separate compressed GLBs plus a manifest for the Mesh2Motion app",
+  "scripts": {
+    "export": "node export.mjs"
+  },
+  "dependencies": {
+    "@gltf-transform/core": "4.5.1",
+    "@gltf-transform/extensions": "4.5.1",
+    "@gltf-transform/functions": "4.5.1",
+    "meshoptimizer": "1.3.0"
+  }
+}

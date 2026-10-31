@@ -98,7 +98,10 @@ if armature:
         track.name = action.name
 
         start_frame = int(round(action.frame_range[0]))  # Blender 5.0 expects an int for NLA strip start frame
-        track.strips.new(action.name, start_frame, action)
+        strip = track.strips.new(action.name, start_frame, action)
+        # Some actions don't get a slot bound automatically, and the exporter then skips the strip ("no action slot assigned")
+        if strip.action_slot is None and action.slots:
+            strip.action_slot = action.slots[0]
 
     # export_frame_range clips every action to this file's scene range (e.g. 1..80 in rig-dragon.blend), which
     # dropped frame 0 and cut long actions short. Cover all exported actions so each keeps its own frame range.
