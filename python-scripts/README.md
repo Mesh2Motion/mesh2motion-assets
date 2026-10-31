@@ -61,7 +61,7 @@ Open `human-ik-fk-snap.py` in Blender's Text Editor and click Run Script. The 3D
 
 ## Export to app (one file per animation + manifest)
 
-Writes every rig to `export_to_app/`: a `manifest.json` listing each rig's animations (name, tags, loop, root motion, WIP, duration, file, hash), the rig model, and one compressed GLB per animation. See `export-to-app/README.md`.
+Writes every rig to `export_to_app/`: a `manifest.json` listing each rig's animations (name, tags, loop, root motion, WIP, duration, file, hash), the rig model, the skeleton alone, the rig variations, and one compressed GLB per animation. See `export-to-app/README.md`.
 
     cd python-scripts/export-to-app
     npm install

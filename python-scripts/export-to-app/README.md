@@ -13,7 +13,7 @@ Needs Node.js and Blender (on PATH, or set the `BLENDER` environment variable to
     node export.mjs human horse      # only these rigs; the others stay in the manifest as they were
     node export.mjs --skip-blender   # redo compression + manifest from the last Blender output
 
-All 9 rigs take under a minute. The rig `.blend` files are opened in the background and never saved.
+All 9 rigs take about a minute. The rig and variation `.blend` files are opened in the background and never saved.
 
 ## Output
 
@@ -21,8 +21,14 @@ All 9 rigs take under a minute. The rig `.blend` files are opened in the backgro
 export_to_app/
   manifest.json
   <rig>/model.glb                  rig mesh + skeleton, no animations (uncompressed)
+  <rig>/skeleton.glb               deform bones only, no mesh or animations (uncompressed); the app fits it to imported meshes
+  <rig>/variations/<name>.glb      the rig fitted to another mesh: mesh + skeleton, no animations (uncompressed)
   <rig>/animations/<slug>.glb      skeleton + one animation, no mesh
 ```
+
+Variations come from `rig-variations/<rig>-<name>.blend` (`blender_export_variations.py`). The file name prefix is the
+rig, except `fish-*`, which uses the shark rig. The export warns when a variation's bones don't match the rig's
+skeleton, or a texture it uses is missing.
 
 `manifest.json`:
 
@@ -34,6 +40,10 @@ export_to_app/
     "human": {
       "fps": 24,
       "model": { "file": "human/model.glb", "bytes": 1234, "hash": "..." },
+      "skeleton": { "file": "human/skeleton.glb", "bytes": 1234, "hash": "..." },
+      "variations": [
+        { "name": "bunny", "file": "human/variations/bunny.glb", "bytes": 1234, "hash": "...", "source": "rig-variations/human-bunny.blend" }
+      ],
       "animations": [
         {
           "name": "Weapon_Block",                 // the action name, also the clip name inside the GLB

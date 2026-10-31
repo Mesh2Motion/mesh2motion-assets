@@ -1,6 +1,7 @@
 // Exports every rig for the Mesh2Motion app into <repo>/export_to_app:
 //   manifest.json                   every rig and its animations (name, tags, frames, file, hash, ...)
 //   <rig>/model.glb                 rig mesh + skeleton, no animations
+//   <rig>/skeleton.glb              deform bones only, no mesh or animations (fitted to custom meshes in the app)
 //   <rig>/animations/<slug>.glb     one animation each: skeleton + clip, no mesh, meshopt-compressed
 //
 // Usage (from this folder, after `npm install`):
@@ -43,13 +44,14 @@ if (unknown.length) {
 }
 const rigs = requested.length ? requested : allRigs;
 
-function runBlender (rig) {
+// Runs one background Blender export. `rig` names the log; `blendArgs` are the arguments before --python
+function runBlender (rig, script, blendArgs = [], scriptArgs = []) {
   const logPath = path.join(stagingDir, `${rig}.log`);
   return new Promise((resolve, reject) => {
     const child = spawn(blender, [
-      '-b', path.join(rigsDir, `rig-${rig}.blend`),
-      '--python', path.join(scriptDir, 'blender_export_rig.py'),
-      '--', '--out', stagingDir
+      '-b', ...blendArgs,
+      '--python', path.join(scriptDir, script),
+      '--', '--out', stagingDir, ...scriptArgs
     ]);
     let output = '';
     child.stdout.on('data', d => { output += d; });
@@ -63,6 +65,7 @@ function runBlender (rig) {
         return;
       }
       for (const line of output.split('\n')) {
+        // The glTF exporter's own warnings are prefixed with a timestamp, so only this repo's scripts' warnings match
         if (line.startsWith('WARNING: ') && !line.includes('Baking animation')) console.log(`  [${rig}] ${line.trim()}`);
       }
       resolve(JSON.parse(result.slice('RESULT_JSON'.length)));
@@ -207,6 +210,40 @@ function fileInfo (filePath) {
   return { bytes: bytes.length, hash: createHash('sha256').update(bytes).digest('hex').slice(0, 16) };
 }
 
+// Each bone's name and parent, in the order of the skin's joints
+async function skinBones (filePath) {
+  const doc = await io.read(filePath);
+  const joints = doc.getRoot().listSkins()[0]?.listJoints() ?? [];
+  return new Map(joints.map(j => [j.getName(), j.getParentNode()?.getName() ?? null]));
+}
+
+// The rig variations (rig-variations/<rig>-<name>.blend): mesh + skeleton, no animations, uncompressed like the model.
+// Warns when a variation's bones don't match the rig's skeleton, since the rig's animations won't fit it then.
+async function exportVariations (rig, stageRigDir, rigOutDir) {
+  const variationsPath = path.join(stagingDir, 'variations.json');
+  const staged = fs.existsSync(variationsPath) ? JSON.parse(fs.readFileSync(variationsPath, 'utf8'))[rig] ?? [] : [];
+  if (!staged.length) return [];
+  fs.mkdirSync(path.join(rigOutDir, 'variations'), { recursive: true });
+  const rigBones = await skinBones(path.join(rigOutDir, 'skeleton.glb'));
+  const variations = [];
+  for (const variation of staged) {
+    const dest = path.join(rigOutDir, variation.file);
+    await writeModel(path.join(stageRigDir, variation.file), dest);
+    const bones = await skinBones(dest);
+    const missing = [...rigBones.keys()].filter(b => !bones.has(b));
+    const extra = [...bones.keys()].filter(b => !rigBones.has(b));
+    const reparented = [...bones.keys()].filter(b => rigBones.has(b) && rigBones.get(b) !== bones.get(b));
+    if (missing.length || extra.length || reparented.length) {
+      console.log(`  [${rig}] WARNING: variation ${variation.name} bones differ from the rig skeleton (${variation.source}):` +
+        (missing.length ? ` missing ${missing.join(', ')};` : '') +
+        (extra.length ? ` extra ${extra.join(', ')};` : '') +
+        (reparented.length ? ` different parent ${reparented.join(', ')};` : ''));
+    }
+    variations.push({ name: variation.name, file: `${rig}/${variation.file}`, ...fileInfo(dest), source: variation.source });
+  }
+  return variations;
+}
+
 async function exportRig (rig) {
   const stageRigDir = path.join(stagingDir, rig);
   const rigInfo = JSON.parse(fs.readFileSync(path.join(stageRigDir, 'rig.json'), 'utf8'));
@@ -215,6 +252,8 @@ async function exportRig (rig) {
   fs.mkdirSync(path.join(rigOutDir, 'animations'), { recursive: true });
 
   await writeModel(path.join(stageRigDir, rigInfo.model), path.join(rigOutDir, 'model.glb'));
+  await writeModel(path.join(stageRigDir, rigInfo.skeleton), path.join(rigOutDir, 'skeleton.glb'));
+  const variations = await exportVariations(rig, stageRigDir, rigOutDir);
   let rawBytes = 0;
   let outBytes = 0;
   let worstRotation = 0;
@@ -259,7 +298,13 @@ async function exportRig (rig) {
   console.log(`  [${rig}] ${animations.length} animations, ${(rawBytes / 1e6).toFixed(2)} MB -> ${(outBytes / 1e6).toFixed(2)} MB` +
     `, worst compression error ${worstRotation.toFixed(3)} deg / ${(worstTranslation * 1000).toFixed(2)} mm`);
 
-  return { fps: rigInfo.fps, model: { file: `${rig}/model.glb`, ...fileInfo(path.join(rigOutDir, 'model.glb')) }, animations };
+  return {
+    fps: rigInfo.fps,
+    model: { file: `${rig}/model.glb`, ...fileInfo(path.join(rigOutDir, 'model.glb')) },
+    skeleton: { file: `${rig}/skeleton.glb`, ...fileInfo(path.join(rigOutDir, 'skeleton.glb')) },
+    variations,
+    animations
+  };
 }
 
 await Promise.all([MeshoptEncoder.ready, MeshoptDecoder.ready]);
@@ -274,11 +319,15 @@ if (!skipBlender) {
   const workers = Array.from({ length: Math.min(3, queue.length) }, async () => {
     while (queue.length) {
       const rig = queue.shift();
-      const result = await runBlender(rig);
+      const result = await runBlender(rig, 'blender_export_rig.py', [path.join(rigsDir, `rig-${rig}.blend`)]);
       console.log(`  [${rig}] ${result.animations} animations exported from Blender`);
     }
   });
-  await Promise.all(workers);
+  // The variations are small, so one Blender process opens each of them in turn
+  const variations = runBlender('variations', 'blender_export_variations.py', [], ['--rigs', ...rigs]).then(result => {
+    for (const [rig, count] of Object.entries(result)) console.log(`  [${rig}] ${count} variations exported from Blender`);
+  });
+  await Promise.all([...workers, variations]);
 }
 
 const manifestPath = path.join(outDir, 'manifest.json');

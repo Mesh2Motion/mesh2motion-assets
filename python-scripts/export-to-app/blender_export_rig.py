@@ -5,7 +5,7 @@ import re
 import sys
 
 ## WHAT IS THIS SCRIPT FOR?
-# Exports one rig for the app: the rig model (mesh + skeleton, no animations) and one GLB per animation
+# Exports one rig for the app: the rig model (mesh + skeleton, no animations), the skeleton alone, and one GLB per animation
 # action (skeleton + that one animation, no mesh), plus a rig.json describing each animation.
 # export.mjs runs this once per rig, then compresses the GLBs and builds the manifest.
 # Run it by hand with:
@@ -104,6 +104,10 @@ anim_data.action = None
 select_only([armature] + meshes)
 bpy.ops.export_scene.gltf(filepath=os.path.join(out_dir, "model.glb"), export_animations=False, **GLTF_SETTINGS)
 
+# Skeleton: deform bones only, no mesh, no animations. The app fits this to a custom mesh someone imports.
+select_only([armature])
+bpy.ops.export_scene.gltf(filepath=os.path.join(out_dir, "skeleton.glb"), export_animations=False, **GLTF_SETTINGS)
+
 # Same filter as combine-and-export.py: any .blend in the rig folder or its sub-folders with "animation" in its name
 animation_files = []
 for folder, _, files in os.walk(rig_dir):
@@ -182,7 +186,7 @@ for filepath in animation_files:
         ))
         print(f"Exported {name} -> {slug}.glb ({start}..{end})")
 
-rig_info = dict(rig=rig_type, fps=fps, model="model.glb", animations=animations)
+rig_info = dict(rig=rig_type, fps=fps, model="model.glb", skeleton="skeleton.glb", animations=animations)
 with open(os.path.join(out_dir, "rig.json"), "w", encoding="utf-8") as f:
     json.dump(rig_info, f, indent=2)
 print("RESULT_JSON" + json.dumps(dict(rig=rig_type, animations=len(animations))))
