@@ -62,6 +62,9 @@ def build_thumbnail_scene():
     scene.render.image_settings.file_format = "PNG"
     scene.render.image_settings.color_mode = "RGBA"
     scene.view_settings.view_transform = VIEW_TRANSFORM
+    for stamp in ("date", "time", "render_time", "frame", "frame_range", "memory", "hostname", "camera",
+                  "lens", "scene", "marker", "filename", "sequencer_strip", "note"):
+        setattr(scene.render, "use_stamp_" + stamp, False)  # no metadata, so an unchanged prop gives the same PNG
     scene.world = build_world()
 
     camera_data = bpy.data.cameras.new(TEMP_SCENE_NAME + "_Camera")
@@ -133,4 +136,6 @@ def main():
     print(f"Done: {len(objects)} thumbnails rendered to {preview_dir}")
 
 
-main()
+# python-scripts/export-to-app/blender_export_props.py imports this file to reuse the thumbnail scene
+if __name__ == "__main__":
+    main()

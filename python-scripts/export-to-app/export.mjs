@@ -3,13 +3,17 @@
 //   <rig>/model.glb                 rig mesh + skeleton, no animations
 //   <rig>/skeleton.glb              deform bones only, no mesh or animations (fitted to custom meshes in the app)
 //   <rig>/animations/<slug>.glb     one animation each: skeleton + clip, no mesh, meshopt-compressed
+//   props_manifest.json             every prop (weapons, tools, ...): name, category, tags, size, file, preview, hash
+//   props/<name>.glb                one prop each, at the origin, from props/Props-MASTER.blend
+//   props/preview/<name>.png        a small transparent preview of each prop
 //
 // Usage (from this folder, after `npm install`):
-//   node export.mjs                 all rigs
+//   node export.mjs                 all rigs and the props
 //   node export.mjs human horse     only these rigs (the other rigs already in the manifest are kept)
+//   node export.mjs props           only the props
 //   node export.mjs --skip-blender  re-run compression + manifest on the last Blender output
 //
-// Blender must be on PATH (or set BLENDER to its exe). The rig .blend files are never saved.
+// Blender must be on PATH (or set BLENDER to its exe). The rig and prop .blend files are never saved.
 
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -27,8 +31,10 @@ const repoDir = path.resolve(scriptDir, '..', '..');
 const rigsDir = path.join(repoDir, 'rigs');
 const outDir = path.join(repoDir, 'export_to_app');
 const stagingDir = path.join(os.tmpdir(), 'm2m-export-to-app-staging');
+const propsBlend = path.join(repoDir, 'props', 'Props-MASTER.blend');
 const blender = process.env.BLENDER || 'blender';
 const MANIFEST_VERSION = 1;
+const PROPS_MANIFEST_VERSION = 1;
 
 const args = process.argv.slice(2);
 const skipBlender = args.includes('--skip-blender');
@@ -37,12 +43,13 @@ const allRigs = fs.readdirSync(rigsDir)
   .map(f => f.slice('rig-'.length, -'.blend'.length))
   .filter(rig => fs.existsSync(path.join(rigsDir, rig)));
 const requested = args.filter(a => !a.startsWith('--'));
-const unknown = requested.filter(r => !allRigs.includes(r));
+const unknown = requested.filter(r => r !== 'props' && !allRigs.includes(r));
 if (unknown.length) {
-  console.error(`Unknown rig(s): ${unknown.join(', ')}. Rigs: ${allRigs.join(', ')}`);
+  console.error(`Unknown rig(s): ${unknown.join(', ')}. Rigs: ${allRigs.join(', ')}, or props`);
   process.exit(1);
 }
-const rigs = requested.length ? requested : allRigs;
+const rigs = requested.length ? requested.filter(r => r !== 'props') : allRigs;
+const doProps = !requested.length || requested.includes('props');
 
 // Runs one background Blender export. `rig` names the log; `blendArgs` are the arguments before --python
 function runBlender (rig, script, blendArgs = [], scriptArgs = []) {
@@ -304,13 +311,42 @@ async function exportRig (rig) {
   };
 }
 
+// The props from Props-MASTER.blend: one GLB each, uncompressed like the rig models, plus its preview PNG
+async function exportProps () {
+  const stagePropsDir = path.join(stagingDir, 'props');
+  const staged = JSON.parse(fs.readFileSync(path.join(stagePropsDir, 'props.json'), 'utf8'));
+  const propsOutDir = path.join(outDir, 'props');
+  fs.rmSync(propsOutDir, { recursive: true, force: true }); // removes props that no longer exist
+  fs.mkdirSync(path.join(propsOutDir, 'preview'), { recursive: true });
+  const props = [];
+  for (const prop of staged) {
+    const dest = path.join(propsOutDir, prop.file);
+    const previewDest = path.join(propsOutDir, prop.preview);
+    await writeModel(path.join(stagePropsDir, prop.file), dest);
+    fs.copyFileSync(path.join(stagePropsDir, prop.preview), previewDest);
+    const { name, display_name: displayName, file, preview, ...details } = prop;
+    props.push({
+      name,
+      display_name: displayName,
+      file: `props/${file}`,
+      ...fileInfo(dest),
+      preview: { file: `props/${preview}`, ...fileInfo(previewDest) },
+      ...details
+    });
+  }
+  const categories = [...new Set(props.map(p => p.category))];
+  console.log(`  [props] ${props.length} props in ${categories.length} categories`);
+  return { version: PROPS_MANIFEST_VERSION, generated: new Date().toISOString(), categories, props };
+}
+
 await Promise.all([MeshoptEncoder.ready, MeshoptDecoder.ready]);
 fs.mkdirSync(outDir, { recursive: true });
 
 if (!skipBlender) {
   for (const rig of rigs) fs.rmSync(path.join(stagingDir, rig), { recursive: true, force: true });
+  if (doProps) fs.rmSync(path.join(stagingDir, 'props'), { recursive: true, force: true });
   fs.mkdirSync(stagingDir, { recursive: true });
-  console.log(`Blender export: ${rigs.join(', ')}`);
+  console.log(`Blender export: ${[...rigs, ...(doProps ? ['props'] : [])].join(', ')}`);
   // A few Blender processes at a time; each one loads a rig and appends every animation file of it
   const queue = [...rigs];
   const workers = Array.from({ length: Math.min(3, queue.length) }, async () => {
@@ -321,19 +357,28 @@ if (!skipBlender) {
     }
   });
   // The variations are small, so one Blender process opens each of them in turn
-  const variations = runBlender('variations', 'blender_export_variations.py', [], ['--rigs', ...rigs]).then(result => {
+  const variations = rigs.length && runBlender('variations', 'blender_export_variations.py', [], ['--rigs', ...rigs]).then(result => {
     for (const [rig, count] of Object.entries(result)) console.log(`  [${rig}] ${count} variations exported from Blender`);
   });
-  await Promise.all([...workers, variations]);
+  // The props render their previews too, which takes a few seconds
+  const props = doProps && runBlender('props', 'blender_export_props.py', [propsBlend]).then(result => {
+    console.log(`  [props] ${result.props} props exported from Blender`);
+  });
+  await Promise.all([...workers, variations, props]);
 }
 
-const manifestPath = path.join(outDir, 'manifest.json');
-const previous = fs.existsSync(manifestPath) ? JSON.parse(fs.readFileSync(manifestPath, 'utf8')) : { rigs: {} };
-const manifest = { version: MANIFEST_VERSION, generated: new Date().toISOString(), rigs: { ...previous.rigs } };
-
 console.log('Compressing and writing export_to_app');
-for (const rig of rigs) manifest.rigs[rig] = await exportRig(rig);
-manifest.rigs = Object.fromEntries(Object.entries(manifest.rigs).sort(([a], [b]) => a.localeCompare(b)));
-
-fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
-console.log(`Wrote ${path.relative(repoDir, manifestPath)}`);
+if (rigs.length) {
+  const manifestPath = path.join(outDir, 'manifest.json');
+  const previous = fs.existsSync(manifestPath) ? JSON.parse(fs.readFileSync(manifestPath, 'utf8')) : { rigs: {} };
+  const manifest = { version: MANIFEST_VERSION, generated: new Date().toISOString(), rigs: { ...previous.rigs } };
+  for (const rig of rigs) manifest.rigs[rig] = await exportRig(rig);
+  manifest.rigs = Object.fromEntries(Object.entries(manifest.rigs).sort(([a], [b]) => a.localeCompare(b)));
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+  console.log(`Wrote ${path.relative(repoDir, manifestPath)}`);
+}
+if (doProps) {
+  const propsManifestPath = path.join(outDir, 'props_manifest.json');
+  fs.writeFileSync(propsManifestPath, JSON.stringify(await exportProps(), null, 2) + '\n');
+  console.log(`Wrote ${path.relative(repoDir, propsManifestPath)}`);
+}

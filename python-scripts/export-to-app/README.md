@@ -9,11 +9,13 @@ Needs Node.js and Blender (on PATH, or set the `BLENDER` environment variable to
 
     cd python-scripts/export-to-app
     npm install
-    node export.mjs                  # every rig
+    node export.mjs                  # every rig and the props
     node export.mjs human horse      # only these rigs; the others stay in the manifest as they were
+    node export.mjs props            # only the props
     node export.mjs --skip-blender   # redo compression + manifest from the last Blender output
 
-All 9 rigs take about a minute. The rig and variation `.blend` files are opened in the background and never saved.
+All 9 rigs take about a minute, the props a few seconds. The rig, variation and prop `.blend` files are opened in the
+background and never saved.
 
 ## Output
 
@@ -24,6 +26,9 @@ export_to_app/
   <rig>/skeleton.glb               deform bones only, no mesh or animations (uncompressed); the app fits it to imported meshes
   <rig>/variations/<name>.glb      the rig fitted to another mesh: mesh + skeleton, no animations (uncompressed)
   <rig>/animations/<slug>.glb      skeleton + one animation, no mesh
+  props_manifest.json
+  props/<name>.glb                 one prop (weapon, tool, ...) at the origin (uncompressed)
+  props/preview/<name>.png         50 px transparent preview of the prop
 ```
 
 Variations come from `rig-variations/<rig>-<name>.blend` (`blender_export_variations.py`). The file name prefix is the
@@ -71,6 +76,47 @@ animation changes but its URL doesn't.
   is tagged `combat`, `melee`.
 - Extra tags: add a custom property `m2m_tags` to the action (Action properties → Custom Properties), as a
   comma-separated string such as `sword, two handed`. Tags are lower-case kebab-case.
+
+## Props
+
+`blender_export_props.py` opens `props/Props-MASTER.blend`. Every mesh in a collection directly under the
+scene collection is a prop, and the collection name is its category (`sword`, `guns`, ...). Objects or collections
+disabled for rendering are skipped. Each prop is exported alone, moved to the origin (the app mounts it by its origin),
+with the same glTF settings as the rig models. The file name is the object name, so keep `.`, `:` and slashes out of
+it. The previews come from `props/render_thumbnails.py`, the same script you can run by hand in Blender, so
+they look the same either way.
+
+Optional custom properties on a prop object (Object properties → Custom Properties):
+
+- `m2m_display_name`: the name the app shows, e.g. `Heavy Sniper Rifle`. Defaults to the object name.
+- `m2m_tags`: extra comma-separated tags, added after the category.
+
+`props_manifest.json`:
+
+```jsonc
+{
+  "version": 1,
+  "generated": "2026-10-31T18:00:00.000Z",
+  "categories": ["arrow", "axe", "bow", "...", "guns"],   // collection order in the .blend
+  "props": [
+    {
+      "name": "AK",                                       // object name, also the node name inside the GLB
+      "display_name": "AK",
+      "file": "props/AK.glb",
+      "hash": "c579eaef7ab0513a",
+      "preview": { "file": "props/preview/AK.png", "hash": "e5830868929ee84e" },
+      "category": "guns",
+      "tags": ["guns"],
+      "dimensions": { "width": 0.6802, "depth": 0.0735, "height": 0.3493 },   // metres, Blender X / Y / Z (Z up)
+      "vertices": 1804,
+      "triangles": 1128,
+      "materials": ["Grey.008", "Grey2.002", "Wood.005", "DarkGrey.009"]
+    }
+  ]
+}
+```
+
+Unchanged props export byte-identical files (GLB and PNG), so `hash` only changes when a prop does.
 
 ## What happens to each animation
 
