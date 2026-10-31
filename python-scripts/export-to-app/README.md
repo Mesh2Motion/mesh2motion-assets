@@ -39,21 +39,19 @@ skeleton, or a texture it uses is missing.
   "rigs": {
     "human": {
       "fps": 24,
-      "model": { "file": "human/model.glb", "bytes": 1234, "hash": "..." },
-      "skeleton": { "file": "human/skeleton.glb", "bytes": 1234, "hash": "..." },
+      "model": { "file": "human/model.glb", "hash": "..." },
+      "skeleton": { "file": "human/skeleton.glb", "hash": "..." },
       "variations": [
-        { "name": "bunny", "file": "human/variations/bunny.glb", "bytes": 1234, "hash": "...", "source": "rig-variations/human-bunny.blend" }
+        { "name": "bunny", "file": "human/variations/bunny.glb", "hash": "...", "source": "rig-variations/human-bunny.blend" }
       ],
       "animations": [
         {
           "name": "Weapon_Block",                 // the action name, also the clip name inside the GLB
           "file": "human/animations/weapon-block.glb",
           "hash": "4013fce91cf586a5",             // sha256 of the file (first 16 hex); use it to bust caches
-          "bytes": 35916,
           "tags": ["combat", "melee"],
           "loop": false,                          // action.use_cyclic
           "root_motion": false,                   // _RM / -rm file or action name
-          "wip": false,                           // WIP- file prefix
           "frame_count": 37,
           "duration": 1.5,                        // seconds, same as the clip's duration in three.js
           "source": "rigs/human/combat/melee/animation-human-weapon-block.blend"

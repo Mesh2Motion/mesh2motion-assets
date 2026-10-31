@@ -59,6 +59,13 @@ The human rig arms can be animated with IK (`CTRL_Arm_*`, `POLEARM_*`) or FK (`F
 Open `human-ik-fk-snap.py` in Blender's Text Editor and click Run Script. The 3D viewport's N panel gets an "M2M" tab with an FK slider per arm and "IK → FK" / "FK → IK" buttons. These match one chain to the other on the current frame, so switching doesn't pop. With "Key on snap" on, they also key the snapped controls and the switch.
 
 
+## PSX characters as human rig variations
+
+`CC0-packs/psx-lowpoly/Models/Characters_PSX.blend` has 22 characters rigged with the human skeleton. This saves each one as `rig-variations/human-psx-<name>.blend` (armature + mesh at the origin, textures linked relatively from the pack), so the export to app picks them up. Existing files are skipped unless you pass `--overwrite`; `--dry-run` only lists them.
+
+    blender -b --python python-scripts/export-psx-variations.py -- --overwrite
+
+
 ## Export to app (one file per animation + manifest)
 
 Writes every rig to `export_to_app/`: a `manifest.json` listing each rig's animations (name, tags, loop, root motion, WIP, duration, file, hash), the rig model, the skeleton alone, the rig variations, and one compressed GLB per animation. See `export-to-app/README.md`.

@@ -128,7 +128,6 @@ for filepath in animation_files:
     rel_folder = os.path.relpath(os.path.dirname(filepath), rig_dir)
     folder_tags = [] if rel_folder == "." else [slugify(p) for p in rel_folder.split(os.sep)]
     base_slug = re.sub(rf"^(wip-)?animation-{rig_type}-", "", slugify(file_name[:-len(".blend")]))
-    is_wip = file_name.upper().startswith("WIP-")
     if not actions:
         print(f"WARNING: no exportable action in {file_name}")
     if len(actions) > 1:
@@ -177,7 +176,6 @@ for filepath in animation_files:
             tags=folder_tags + [t for t in action_tags(action) if t not in folder_tags],
             loop=bool(action.use_cyclic),
             root_motion=root_motion,
-            wip=is_wip,
             frame_start=start,
             frame_end=end,
             frame_count=end - start + 1,

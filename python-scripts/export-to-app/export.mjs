@@ -206,8 +206,7 @@ function clipDuration (doc) {
 }
 
 function fileInfo (filePath) {
-  const bytes = fs.readFileSync(filePath);
-  return { bytes: bytes.length, hash: createHash('sha256').update(bytes).digest('hex').slice(0, 16) };
+  return { hash: createHash('sha256').update(fs.readFileSync(filePath)).digest('hex').slice(0, 16) };
 }
 
 // Each bone's name and parent, in the order of the skin's joints
@@ -276,16 +275,14 @@ async function exportRig (rig) {
       console.log(`  [${rig}] WARNING: ${anim.name} clip is ${duration.toFixed(3)} s but its frame range is ${anim.duration} s (${anim.source})`);
     }
     rawBytes += fs.statSync(src).size;
-    outBytes += info.bytes;
+    outBytes += fs.statSync(dest).size;
     animations.push({
       name: anim.name,
       file: `${rig}/${anim.file}`,
       hash: info.hash,
-      bytes: info.bytes,
       tags: anim.tags,
       loop: anim.loop,
       root_motion: anim.root_motion,
-      wip: anim.wip,
       frame_count: Math.round(duration * rigInfo.fps) + 1,
       duration: Math.round(duration * 1e4) / 1e4,
       source: anim.source
