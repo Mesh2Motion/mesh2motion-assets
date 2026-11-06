@@ -58,6 +58,40 @@ def pin_unkeyed_properties(action, defaults):
                         channelbag.fcurves.new(path).keyframe_points.insert(action.frame_range[0], value)
 
 
+def load_actions_and_scene_range(filepath):
+    # Appends the file's actions and returns them with its timeline range (or None). The scene is appended only to
+    # read its range, so it and its objects are removed again.
+    local_objects_before = {obj.as_pointer() for obj in bpy.data.objects}
+    with bpy.data.libraries.load(filepath) as (data_from, data_to):
+        data_to.actions = data_from.actions
+        data_to.scenes = data_from.scenes[:1]
+    scene_range = None
+    for source_scene in data_to.scenes:
+        if source_scene is not None:
+            scene_range = (source_scene.frame_start, source_scene.frame_end)
+            bpy.data.scenes.remove(source_scene)
+    for obj in [o for o in bpy.data.objects if o.library is None and o.as_pointer() not in local_objects_before]:
+        bpy.data.objects.remove(obj)
+    return [a for a in data_to.actions if a is not None], scene_range
+
+
+def apply_scene_range(action, scene_range):
+    # The animation file's timeline is the clip; animation files don't use manual action ranges.
+    # Set in memory only, so the export below (and the loop trim) can read it from the action.
+    # A non-cyclic clip is extended to its last key so a short timeline never cuts motion off (fox Play Bow ended at
+    # 56 of 99). Cyclic clips keep the timeline: their keys outside it are curve handles or a wider cycle window (shark).
+    if scene_range is None:
+        return
+    start, end = scene_range
+    if not action.use_cyclic:
+        last_key = max((k.co.x for fc in all_fcurves(action) for k in fc.keyframe_points), default=end)
+        if last_key > end:
+            print(f"WARNING: extended {action.name} past the scene end to its last key ({end}..{round(last_key)})")
+            end = round(last_key)
+    action.use_frame_range = True
+    action.frame_range = (start, end)
+
+
 def trim_repeated_loop_frame(action):
     # Many looping files key the same pose on their first and last frame. Played as a loop that frame shows twice
     # (a hitch), so export the action without that last frame when it is cyclic, or starts at frame 0.
@@ -119,10 +153,8 @@ animation_files.sort()
 animations = []
 used_slugs = set()
 for filepath in animation_files:
-    with bpy.data.libraries.load(filepath) as (data_from, data_to):
-        data_to.actions = data_from.actions
-    actions = [a for a in data_to.actions if a is not None
-               and "EmptyAction" not in a.name and not a.name.startswith("RIG_")]
+    loaded_actions, scene_range = load_actions_and_scene_range(filepath)
+    actions = [a for a in loaded_actions if "EmptyAction" not in a.name and not a.name.startswith("RIG_")]
 
     file_name = os.path.basename(filepath)
     rel_folder = os.path.relpath(os.path.dirname(filepath), rig_dir)
@@ -141,6 +173,7 @@ for filepath in animation_files:
             slug += "-2"
         used_slugs.add(slug)
 
+        apply_scene_range(action, scene_range)
         pin_unkeyed_properties(action, property_defaults)
         trimmed = trim_repeated_loop_frame(action)
         start, end = (int(round(f)) for f in action.frame_range)

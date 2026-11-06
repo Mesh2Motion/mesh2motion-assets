@@ -32,14 +32,50 @@ blend_dir = os.path.join(base_dir, rig_type)
 output_file = os.path.join(blend_dir, f"{rig_type}-animations.glb")
 
 
+def load_actions_and_scene_range(filepath):
+    # Appends the file's actions and returns them with its timeline range (or None). The scene is appended only to
+    # read its range, so it and its objects are removed again.
+    local_objects_before = {obj.as_pointer() for obj in bpy.data.objects}
+    with bpy.data.libraries.load(filepath) as (data_from, data_to):
+        data_to.actions = data_from.actions
+        data_to.scenes = data_from.scenes[:1]
+    scene_range = None
+    for source_scene in data_to.scenes:
+        if source_scene is not None:
+            scene_range = (source_scene.frame_start, source_scene.frame_end)
+            bpy.data.scenes.remove(source_scene)
+    for obj in [o for o in bpy.data.objects if o.library is None and o.as_pointer() not in local_objects_before]:
+        bpy.data.objects.remove(obj)
+    return [a for a in data_to.actions if a is not None], scene_range
+
+
+def apply_scene_range(action, scene_range):
+    # The animation file's timeline is the clip; animation files don't use manual action ranges.
+    # Set in memory only, so the export below (and the loop trim) can read it from the action.
+    # A non-cyclic clip is extended to its last key so a short timeline never cuts motion off (fox Play Bow ended at
+    # 56 of 99). Cyclic clips keep the timeline: their keys outside it are curve handles or a wider cycle window (shark).
+    if scene_range is None:
+        return
+    start, end = scene_range
+    if not action.use_cyclic:
+        last_key = max((k.co.x for layer in action.layers for strip in layer.strips for cb in strip.channelbags
+                        for fc in cb.fcurves for k in fc.keyframe_points), default=end)
+        if last_key > end:
+            print(f"WARNING: extended {action.name} past the scene end to its last key ({end}..{round(last_key)})")
+            end = round(last_key)
+    action.use_frame_range = True
+    action.frame_range = (start, end)
+
+
 # Iterate over each Blender file, including sub-folders (e.g. human/combat/melee)
 for folder, _, files in os.walk(blend_dir):
     for file in files:
         if file.endswith(".blend") and "animation" in file.lower():
             # Append actions from the file
             filepath = os.path.join(folder, file)
-            with bpy.data.libraries.load(filepath) as (data_from, data_to):
-                data_to.actions = data_from.actions
+            loaded_actions, scene_range = load_actions_and_scene_range(filepath)
+            for action in loaded_actions:
+                apply_scene_range(action, scene_range)
 
 
 # assign all actions to the armature so they get exported. This is newer in Blender 5.0
@@ -72,7 +108,8 @@ def trim_repeated_loop_frame(action):
         print(f"Trimmed repeated loop frame: {action.name} ({start:.0f}..{end - 1:.0f})")
 
 
-armature = next((obj for obj in bpy.data.objects if obj.type == 'ARMATURE'), None)
+# The rig file's own scene: appending each animation file's scene can leave linked rig objects in bpy.data
+armature = next((obj for obj in bpy.context.scene.objects if obj.type == 'ARMATURE'), None)
 if armature:
     # Ensure animation_data exists on the armature object
     anim_data = armature.animation_data_create()

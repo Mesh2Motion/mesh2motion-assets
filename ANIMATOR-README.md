@@ -45,6 +45,10 @@ The easiest way I have found to do this is position the hip bone where you want,
 
 For each rig, there is a root bone that should be at the origin (0,0,0). This is the parent of all the bones. Currently Mesh2Motion doesn't support root motion, so don't keyframes to that for now. Any root motion will be stripped out when Mesh2Motion loads an animation. 
 
+### Frame range
+
+The scene's frame range (the timeline's Start and End) is the length of the exported animation. Start at frame 0, not Blender's default 1. Don't turn on the action's "Manual Frame Range": the export ignores it, and a stale one used to cut clips short. For a loop, check "Cyclic Animation" on the action (it sits under Manual Frame Range, so turn that on, check Cyclic, then turn it back off); the app uses it as the loop flag.
+
 ## Final skeleton and animation files for rig
 
 When the animations are ready, you can export out the skeleton by itself in the "skeletons" folder as a GLB if you made changes to that. I usually remove all the animations from the skeleton to make the skeleton size smaller. 
