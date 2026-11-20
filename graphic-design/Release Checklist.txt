@@ -33,3 +33,21 @@ https://mesh2motion.org/news
 Try it out and any feedback welcome: https://app.mesh2motion.org
 
 (add screenshot/video here below it all)
+
+
+-----------------------------------------
+
+Mesh2Motion Release 14 Out 🎉 
+
+- Remix two animations to make a new one
+- Clean up the rig with weight painting
+- Attach props to your character
+- 50+ new animations
+
+Check out the full release notes with all changes: 
+https://mesh2motion.org/news
+
+Try it out
+https://app.mesh2motion.org
+
+(screenshot)
