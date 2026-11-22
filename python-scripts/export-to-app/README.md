@@ -9,10 +9,8 @@ Needs Node.js and Blender (on PATH, or set the `BLENDER` environment variable to
 
     cd python-scripts/export-to-app
     npm install
-    node export.mjs                  # every rig and the props
-    node export.mjs human horse      # only these rigs; the others stay in the manifest as they were
-    node export.mjs props            # only the props
-    node export.mjs --skip-blender   # redo compression + manifest from the last Blender output
+    node export.mjs                  # always a full export: every rig and the props, so the manifest is complete
+    node export.mjs --skip-blender   # redo compression + manifest from the last full Blender output
 
 All 9 rigs take about a minute, the props a few seconds. The rig, variation and prop `.blend` files are opened in the
 background and never saved.

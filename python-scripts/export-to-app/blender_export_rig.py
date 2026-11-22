@@ -66,13 +66,15 @@ def load_actions_and_scene_range(filepath):
         data_to.actions = data_from.actions
         data_to.scenes = data_from.scenes[:1]
     scene_range = None
+    file_fps = None
     for source_scene in data_to.scenes:
         if source_scene is not None:
             scene_range = (source_scene.frame_start, source_scene.frame_end)
+            file_fps = source_scene.render.fps / source_scene.render.fps_base
             bpy.data.scenes.remove(source_scene)
     for obj in [o for o in bpy.data.objects if o.library is None and o.as_pointer() not in local_objects_before]:
         bpy.data.objects.remove(obj)
-    return [a for a in data_to.actions if a is not None], scene_range
+    return [a for a in data_to.actions if a is not None], scene_range, file_fps
 
 
 def apply_scene_range(action, scene_range):
@@ -126,6 +128,7 @@ if armature is None:
 meshes = [obj for obj in bpy.context.scene.objects if obj.type == 'MESH']
 scene = bpy.context.scene
 fps = scene.render.fps / scene.render.fps_base
+rig_fps_int, rig_fps_base = scene.render.fps, scene.render.fps_base
 
 property_defaults = {f'["{k}"]': float(v) for k, v in armature.items() if isinstance(v, (int, float))}
 for pose_bone in armature.pose.bones:
@@ -150,15 +153,27 @@ for folder, _, files in os.walk(rig_dir):
             animation_files.append(os.path.join(folder, file))
 animation_files.sort()
 
+# Motion capture animations (motion-capture/animations/<rig>/) are exported too, tagged "motion-capture".
+# Their files are often not 24 fps (the mocap files are 60), so each clip is exported at its own file's fps.
+mocap_dir = os.path.join(repo_dir, "motion-capture", "animations", rig_type)
+mocap_files = set()
+if os.path.isdir(mocap_dir):
+    for file in sorted(os.listdir(mocap_dir)):
+        if file.endswith(".blend") and "animation" in file.lower():
+            mocap_files.add(os.path.join(mocap_dir, file))
+animation_files += sorted(mocap_files)
+
 animations = []
 used_slugs = set()
 for filepath in animation_files:
-    loaded_actions, scene_range = load_actions_and_scene_range(filepath)
+    loaded_actions, scene_range, file_fps = load_actions_and_scene_range(filepath)
+    is_mocap = filepath in mocap_files
+    clip_fps = float(round(file_fps)) if (is_mocap and file_fps) else fps
     actions = [a for a in loaded_actions if "EmptyAction" not in a.name and not a.name.startswith("RIG_")]
 
     file_name = os.path.basename(filepath)
     rel_folder = os.path.relpath(os.path.dirname(filepath), rig_dir)
-    folder_tags = [] if rel_folder == "." else [slugify(p) for p in rel_folder.split(os.sep)]
+    folder_tags = ["motion-capture"] if is_mocap else ([] if rel_folder == "." else [slugify(p) for p in rel_folder.split(os.sep)])
     base_slug = re.sub(rf"^(wip-)?animation-{rig_type}-", "", slugify(file_name[:-len(".blend")]))
     if not actions:
         print(f"WARNING: no exportable action in {file_name}")
@@ -188,6 +203,7 @@ for filepath in animation_files:
             strip.action_slot = action.slots[0]
         # export_frame_range clips the action to the scene range
         scene.frame_start, scene.frame_end = start, end
+        scene.render.fps, scene.render.fps_base = int(round(clip_fps)), 1.0
 
         select_only([armature])
         bpy.ops.export_scene.gltf(
@@ -200,6 +216,7 @@ for filepath in animation_files:
             export_anim_slide_to_zero=True,  # actions that still start at frame 1 would otherwise get an empty first frame
             **GLTF_SETTINGS,
         )
+        scene.render.fps, scene.render.fps_base = rig_fps_int, rig_fps_base
         root_motion = bool(re.search(r"[_-]rm$", base_slug) or re.search(r"[_ ]RM$", name))
         animations.append(dict(
             name=name,
@@ -212,7 +229,8 @@ for filepath in animation_files:
             frame_start=start,
             frame_end=end,
             frame_count=end - start + 1,
-            duration=round((end - start) / fps, 4),  # matches the glTF clip: first key to last key
+            fps=clip_fps,
+            duration=round((end - start) / clip_fps, 4),  # matches the glTF clip: first key to last key
             looped_frame_trimmed=trimmed,
         ))
         print(f"Exported {name} -> {slug}.glb ({start}..{end})")

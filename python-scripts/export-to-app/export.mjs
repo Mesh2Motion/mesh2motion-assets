@@ -8,10 +8,8 @@
 //   props/preview/<name>.png        a small transparent preview of each prop
 //
 // Usage (from this folder, after `npm install`):
-//   node export.mjs                 all rigs and the props
-//   node export.mjs human horse     only these rigs (the other rigs already in the manifest are kept)
-//   node export.mjs props           only the props
-//   node export.mjs --skip-blender  re-run compression + manifest on the last Blender output
+//   node export.mjs                 everything: all rigs and the props (always a full export, so the manifest is complete)
+//   node export.mjs --skip-blender  re-run compression + manifest on the last full Blender output
 //
 // Blender must be on PATH (or set BLENDER to its exe). The rig and prop .blend files are never saved.
 
@@ -37,19 +35,16 @@ const MANIFEST_VERSION = 1;
 const PROPS_MANIFEST_VERSION = 1;
 
 const args = process.argv.slice(2);
+const unknownArgs = args.filter(a => a !== '--skip-blender');
+if (unknownArgs.length) {
+  console.error(`Unknown argument(s): ${unknownArgs.join(', ')}. The export is always complete; the only option is --skip-blender`);
+  process.exit(1);
+}
 const skipBlender = args.includes('--skip-blender');
-const allRigs = fs.readdirSync(rigsDir)
+const rigs = fs.readdirSync(rigsDir)
   .filter(f => /^rig-[a-z0-9-]+\.blend$/.test(f))
   .map(f => f.slice('rig-'.length, -'.blend'.length))
   .filter(rig => fs.existsSync(path.join(rigsDir, rig)));
-const requested = args.filter(a => !a.startsWith('--'));
-const unknown = requested.filter(r => r !== 'props' && !allRigs.includes(r));
-if (unknown.length) {
-  console.error(`Unknown rig(s): ${unknown.join(', ')}. Rigs: ${allRigs.join(', ')}, or props`);
-  process.exit(1);
-}
-const rigs = requested.length ? requested.filter(r => r !== 'props') : allRigs;
-const doProps = !requested.length || requested.includes('props');
 
 // Runs one background Blender export. `rig` names the log; `blendArgs` are the arguments before --python
 function runBlender (rig, script, blendArgs = [], scriptArgs = []) {
@@ -291,7 +286,7 @@ async function exportRig (rig) {
     const info = fileInfo(dest);
     // The exporter ends a clip at its last key that changes anything, which can be shorter than the action's frame range
     const duration = clipDuration(await io.read(src));
-    if (Math.abs(duration - anim.duration) > 0.5 / rigInfo.fps) {
+    if (Math.abs(duration - anim.duration) > 0.5 / (anim.fps ?? rigInfo.fps)) {
       console.log(`  [${rig}] WARNING: ${anim.name} clip is ${duration.toFixed(3)} s but its frame range is ${anim.duration} s (${anim.source})`);
     }
     rawBytes += fs.statSync(src).size;
@@ -303,7 +298,8 @@ async function exportRig (rig) {
       tags: anim.tags,
       loop: anim.loop,
       root_motion: anim.root_motion,
-      frame_count: Math.round(duration * rigInfo.fps) + 1,
+      fps: anim.fps ?? rigInfo.fps,
+      frame_count: Math.round(duration * (anim.fps ?? rigInfo.fps)) + 1,
       duration: Math.round(duration * 1e4) / 1e4,
       source: anim.source
     });
@@ -357,9 +353,9 @@ fs.mkdirSync(outDir, { recursive: true });
 
 if (!skipBlender) {
   for (const rig of rigs) fs.rmSync(path.join(stagingDir, rig), { recursive: true, force: true });
-  if (doProps) fs.rmSync(path.join(stagingDir, 'props'), { recursive: true, force: true });
+  fs.rmSync(path.join(stagingDir, 'props'), { recursive: true, force: true });
   fs.mkdirSync(stagingDir, { recursive: true });
-  console.log(`Blender export: ${[...rigs, ...(doProps ? ['props'] : [])].join(', ')}`);
+  console.log(`Blender export: ${[...rigs, 'props'].join(', ')}`);
   // A few Blender processes at a time; each one loads a rig and appends every animation file of it
   const queue = [...rigs];
   const workers = Array.from({ length: Math.min(3, queue.length) }, async () => {
@@ -370,28 +366,24 @@ if (!skipBlender) {
     }
   });
   // The variations are small, so one Blender process opens each of them in turn
-  const variations = rigs.length && runBlender('variations', 'blender_export_variations.py', [], ['--rigs', ...rigs]).then(result => {
+  const variations = runBlender('variations', 'blender_export_variations.py', [], ['--rigs', ...rigs]).then(result => {
     for (const [rig, count] of Object.entries(result)) console.log(`  [${rig}] ${count} variations exported from Blender`);
   });
   // The props render their previews too, which takes a few seconds
-  const props = doProps && runBlender('props', 'blender_export_props.py', [propsBlend]).then(result => {
+  const props = runBlender('props', 'blender_export_props.py', [propsBlend]).then(result => {
     console.log(`  [props] ${result.props} props exported from Blender`);
   });
   await Promise.all([...workers, variations, props]);
 }
 
 console.log('Compressing and writing export_to_app');
-if (rigs.length) {
-  const manifestPath = path.join(outDir, 'manifest.json');
-  const previous = fs.existsSync(manifestPath) ? JSON.parse(fs.readFileSync(manifestPath, 'utf8')) : { rigs: {} };
-  const manifest = { version: MANIFEST_VERSION, generated: new Date().toISOString(), rigs: { ...previous.rigs } };
-  for (const rig of rigs) manifest.rigs[rig] = await exportRig(rig);
-  manifest.rigs = Object.fromEntries(Object.entries(manifest.rigs).sort(([a], [b]) => a.localeCompare(b)));
-  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
-  console.log(`Wrote ${path.relative(repoDir, manifestPath)}`);
-}
-if (doProps) {
-  const propsManifestPath = path.join(outDir, 'props_manifest.json');
-  fs.writeFileSync(propsManifestPath, JSON.stringify(await exportProps(), null, 2) + '\n');
-  console.log(`Wrote ${path.relative(repoDir, propsManifestPath)}`);
-}
+const manifestPath = path.join(outDir, 'manifest.json');
+const manifest = { version: MANIFEST_VERSION, generated: new Date().toISOString(), rigs: {} };
+for (const rig of rigs) manifest.rigs[rig] = await exportRig(rig);
+manifest.rigs = Object.fromEntries(Object.entries(manifest.rigs).sort(([a], [b]) => a.localeCompare(b)));
+fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+console.log(`Wrote ${path.relative(repoDir, manifestPath)}`);
+
+const propsManifestPath = path.join(outDir, 'props_manifest.json');
+fs.writeFileSync(propsManifestPath, JSON.stringify(await exportProps(), null, 2) + '\n');
+console.log(`Wrote ${path.relative(repoDir, propsManifestPath)}`);
